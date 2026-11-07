@@ -130,7 +130,7 @@ Deux options :
 
 ## 5. Vérification
 
-Dans l'application : **Réglages → Synchronisation distante** affiche
+Dans l'application : **Paramètres → Compte** affiche
 « configurée / non configurée », l'identifiant d'appareil et la date de la dernière synchro.
 Le bouton **Synchroniser maintenant** envoie les logiciels locaux et récupère ceux du compte.
 ---

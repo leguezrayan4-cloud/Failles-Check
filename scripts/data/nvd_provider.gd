@@ -124,7 +124,11 @@ func _to_item(cve: Dictionary) -> Dictionary:
 		var picked := _pick_metric(metrics)
 		if not picked.is_empty():
 			score = float(picked.get("score", 0.0))
-			severity = _map_severity(str(picked.get("severity", "")))
+			# Le barème officiel (score CVSS) est plus fiable que le libellé de
+			# la source, qui varie selon la version du CVSS (« HIGH », …).
+			severity = _severity_from_score(score)
+			if score <= 0.0:
+				severity = _map_severity(str(picked.get("severity", "")))
 			vector = str(picked.get("vector", "—"))
 
 	var product := "—"
@@ -146,7 +150,7 @@ func _to_item(cve: Dictionary) -> Dictionary:
 		"product": product,
 		"version": version,
 		"date": date,
-		"status": "Consulter la source NVD",
+		"status": "Publiée",
 		"summary": _truncate(desc, 260),
 		"description": desc,
 		"remediation": "Consultez la fiche officielle %s sur le NVD pour appliquer le correctif recommandé par l'éditeur." % id,
@@ -225,6 +229,18 @@ func _parse_cpe(cpe: String) -> Dictionary:
 	if version == "" or version == "*":
 		version = "toutes versions"
 	return {"product": product, "version": version}
+
+## Barème CVSS : 9.0+ critique, 7.0+ élevée, 4.0+ moyenne, sinon faible.
+func _severity_from_score(score: float) -> String:
+	if score >= 9.0:
+		return "critique"
+	if score >= 7.0:
+		return "elevee"
+	if score >= 4.0:
+		return "moyenne"
+	if score > 0.0:
+		return "faible"
+	return "moyenne"
 
 func _map_severity(raw: String) -> String:
 	match raw.to_upper():

@@ -34,17 +34,19 @@ func run() -> void:
 	DataStore.refresh_from_cache()
 	await _next_frame()
 
-	if DataStore.is_online():
+	if DataStore.is_demo():
+		# Le catalogue de démonstration est local : aucune requête réseau.
+		progress_changed.emit(0.68, "Mode démonstration")
+	elif DataStore.is_online():
 		progress_changed.emit(0.38, "Connexion à la source NVD…")
 		var res: Dictionary = await DataStore.fetch_vulnerabilities_async("")
 		if not bool(res.get("ok", false)):
 			_running = false
 			failed.emit(str(res.get("error", "Le chargement distant a échoué.")))
 			return
-		progress_changed.emit(0.68, "%d vulnérabilités disponibles depuis le NVD." % int(res.get("count", 0)))
+		progress_changed.emit(0.68, "%d vulnérabilités (NVD)" % int(res.get("count", 0)))
 	else:
-		_warnings.append("source en ligne désactivée")
-		progress_changed.emit(0.68, "Mode hors ligne : données locales.")
+		progress_changed.emit(0.68, "Mode hors ligne")
 	await _next_frame()
 
 	if SyncProvider.is_configured():
@@ -52,8 +54,6 @@ func run() -> void:
 		var sync_res: Dictionary = await DataStore.sync_now()
 		if not bool(sync_res.get("ok", false)):
 			_warnings.append(str(sync_res.get("error", "synchronisation distante incomplète")))
-	else:
-		_warnings.append("synchronisation distante non configurée")
 	await _next_frame()
 
 	progress_changed.emit(0.94, "Finalisation du catalogue…")
@@ -72,7 +72,6 @@ func continue_offline() -> void:
 		return
 	if DataStore.is_online():
 		DataStore.set_online(false)
-	_warnings.append("poursuite sans la source distante")
 	progress_changed.emit(1.0, "Hors ligne")
 	completed.emit(true, summary())
 

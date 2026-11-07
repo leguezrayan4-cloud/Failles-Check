@@ -8,10 +8,12 @@ signal selection_changed
 signal toast(message: String)
 signal loading_changed(is_loading: bool)
 signal fetch_finished(ok: bool, message: String, source: String)
+## Réglage d'accessibilité (transparence réduite) modifié.
+signal accessibility_changed
 
 const SAVE_PATH := "user://faillescheck_save.json"
 const SAVE_VERSION := 3
-const DEFAULT_SETTINGS := {"demo_data": false, "online": false, "client_id": ""}
+const DEFAULT_SETTINGS := {"demo_data": false, "online": false, "client_id": "", "reduce_transparency": false}
 const MAX_RESULTS := 25
 
 var settings: Dictionary = DEFAULT_SETTINGS.duplicate(true)
@@ -53,6 +55,18 @@ func is_online() -> bool:
 
 func is_loading() -> bool:
 	return _loading
+
+func is_reduce_transparency() -> bool:
+	return bool(settings.get("reduce_transparency", false))
+
+## Accessibilité : fonds plus opaques et contrastes renforcés (inspiré d'iOS).
+## Le réglage est enregistré localement et appliqué immédiatement.
+func set_reduce_transparency(value: bool) -> void:
+	settings["reduce_transparency"] = value
+	UI.transparency_reduced = value
+	save_data()
+	accessibility_changed.emit()
+	toast.emit("Transparence réduite" if value else "Transparence normale")
 
 func catalog() -> SoftwareCatalog:
 	return _catalog
@@ -125,6 +139,7 @@ func load_local() -> void:
 			elif txt.strip_edges() != "":
 				push_warning("FaillesCheck : sauvegarde illisible, état conservé.")
 	_ensure_client_id()
+	UI.transparency_reduced = is_reduce_transparency()
 	data_changed.emit()
 
 ## Étape 2 : catalogue hors ligne construit depuis le cache local.
@@ -202,7 +217,7 @@ func search_online(query: String) -> void:
 	if _loading:
 		return
 	if not is_online():
-		fetch_finished.emit(false, "Activez « Source en ligne (NVD) » dans Réglages pour interroger la source.", "")
+		fetch_finished.emit(false, "Source en ligne désactivée.", "")
 		return
 	_set_loading(true)
 	_nvd_provider.fetch(query, MAX_RESULTS)
@@ -217,7 +232,7 @@ func _on_nvd_completed(results: Array, meta: Dictionary) -> void:
 			data_changed.emit()
 	var message := ""
 	if ok:
-		message = "%d vulnérabilité(s) récupérée(s) depuis le NVD." % results.size()
+		message = "%d vulnérabilité(s) récupérée(s)." % results.size()
 	else:
 		message = str(meta.get("error", "Erreur de récupération."))
 	fetch_finished.emit(ok, message, str(meta.get("source", "")))

@@ -24,7 +24,18 @@ var _loading_spinner: Spinner
 var _toast_panel: PanelContainer
 var _toast: Label
 var _toast_tween: Tween
+var _notif_layer: Control
+var _nav_pills: Array[PanelContainer] = []
 var _defs: Array = []
+
+# --- Ordre d'affichage (z_index) -------------------------------------------
+## z_index explicite pour que rien ne recouvre ce qui doit rester devant :
+## pages < onglets < détail < chargement < notifications.
+const Z_PAGES := 0
+const Z_NAV := 10
+const Z_SHEET := 20
+const Z_LOADING := 30
+const Z_NOTIF := 100
 
 func _ready() -> void:
 	theme = UI.build_theme()
@@ -39,9 +50,10 @@ func _ready() -> void:
 	_build_pages()
 	_build_nav()
 	_build_sheet()
-	_build_toast()
+	_build_notifications()
 	_build_loading()
 	DataStore.toast.connect(_show_toast)
+	DataStore.accessibility_changed.connect(_on_accessibility_changed)
 	_switch_to(0, true)
 	_start_loading()
 
@@ -72,6 +84,7 @@ func _build_pages() -> void:
 	_pages_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_pages_layer.offset_bottom = -NAV_H
 	_pages_layer.mouse_filter = Control.MOUSE_FILTER_PASS
+	_pages_layer.z_index = Z_PAGES
 	add_child(_pages_layer)
 	for d in _defs:
 		var page: Control = d["page"].new()
@@ -90,16 +103,9 @@ func _build_nav() -> void:
 	_nav_layer.offset_bottom = 0.0
 	_nav_layer.offset_left = 0.0
 	_nav_layer.offset_right = 0.0
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1, 1, 1, 0.96)
-	sb.border_color = UI.BORDER
-	sb.border_width_top = 1
-	sb.content_margin_left = 6
-	sb.content_margin_right = 6
-	sb.content_margin_top = 8
-	sb.content_margin_bottom = 12
-	_nav_layer.add_theme_stylebox_override("panel", sb)
+	_nav_layer.z_index = Z_NAV
 	add_child(_nav_layer)
+	_apply_nav_style()
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 2)
@@ -117,7 +123,22 @@ func _make_nav_item(title: String, icon_svg: String, index: int) -> Button:
 	b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	b.add_theme_stylebox_override("hover", UI.stylebox(Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.06), 12, 0, Color(0, 0, 0, 0), 0))
 	b.add_theme_stylebox_override("pressed", UI.stylebox(Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.13), 12, 0, Color(0, 0, 0, 0), 0))
+	b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+	# Pastille de sélection (style iOS moderne) derrière l'icône de l'onglet actif.
+	var pill := PanelContainer.new()
+	pill.custom_minimum_size = Vector2(58, 34)
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pill.add_theme_stylebox_override("panel", _nav_pill_style())
+	pill.visible = false
+	var pcenter := CenterContainer.new()
+	pcenter.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pcenter.offset_top = -12
+	pcenter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pcenter.add_child(pill)
+	b.add_child(pcenter)
+
 	var vb := VBoxContainer.new()
 	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -134,7 +155,40 @@ func _make_nav_item(title: String, icon_svg: String, index: int) -> Button:
 	b.pressed.connect(_on_nav_pressed.bind(index))
 	_nav_icons.append(ic)
 	_nav_labels.append(lb)
+	_nav_pills.append(pill)
 	return b
+
+# --- Style de la barre d'onglets -------------------------------------------
+func _apply_nav_style() -> void:
+	if _nav_layer == null:
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 1) if UI.transparency_reduced else Color(1, 1, 1, 0.97)
+	sb.border_color = UI.BORDER_STRONG if UI.transparency_reduced else UI.BORDER
+	sb.border_width_top = 1
+	sb.content_margin_left = 6
+	sb.content_margin_right = 6
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 12
+	_nav_layer.add_theme_stylebox_override("panel", sb)
+	for p in _nav_pills:
+		if is_instance_valid(p):
+			p.add_theme_stylebox_override("panel", _nav_pill_style())
+	_update_nav()
+
+func _nav_pill_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.22 if UI.transparency_reduced else 0.13)
+	sb.set_corner_radius_all(17)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.38 if UI.transparency_reduced else 0.22)
+	sb.set_content_margin_all(0)
+	return sb
+
+## Réglage d'accessibilité modifié : on réapplique les styles globaux.
+func _on_accessibility_changed() -> void:
+	_apply_nav_style()
+	_apply_toast_style()
 
 func _on_nav_pressed(index: int) -> void:
 	if _sheet != null and _sheet.is_open():
@@ -143,16 +197,20 @@ func _on_nav_pressed(index: int) -> void:
 	_switch_to(index, false, dir)
 
 func _update_nav() -> void:
+	var idle := UI.TEXT_2 if UI.transparency_reduced else UI.TEXT_3
 	for i in _nav_icons.size():
 		var active := i == _current
-		var c := UI.ACCENT if active else UI.TEXT_3
+		var c := UI.ACCENT if active else idle
 		_nav_icons[i].modulate = c
 		_nav_labels[i].add_theme_color_override("font_color", c)
+		if i < _nav_pills.size() and is_instance_valid(_nav_pills[i]):
+			_nav_pills[i].visible = active
 
 # --- Détail ----------------------------------------------------------------
 func _build_sheet() -> void:
 	_sheet = DetailSheet.new()
 	_sheet.name = "DetailSheet"
+	_sheet.z_index = Z_SHEET
 	add_child(_sheet)
 
 ## Ouverture du détail par-dessus l'écran courant (Accueil ou Recherche).
@@ -214,6 +272,7 @@ func _build_loading() -> void:
 	_loading_layer = Control.new()
 	_loading_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_loading_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	_loading_layer.z_index = Z_LOADING
 	add_child(_loading_layer)
 
 	var bg := TextureRect.new()
@@ -293,11 +352,6 @@ func _build_loading() -> void:
 	_loading_actions.add_child(offline)
 	v.add_child(_loading_actions)
 
-	var note := UI.label("Données publiques : NVD (NIST) · cache local · DÉMO · FICTIF",
-		11, UI.TEXT_3, false, true)
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(note)
-
 func _start_loading() -> void:
 	_pages_layer.modulate.a = 0.0
 	_nav_layer.modulate.a = 0.0
@@ -368,38 +422,63 @@ func _on_continue_offline() -> void:
 func _set_loading_actions_visible(v: bool) -> void:
 	_loading_actions.visible = v
 
-# --- Toast -----------------------------------------------------------------
-func _build_toast() -> void:
+# --- Notifications ---------------------------------------------------------
+## Couche dédiée (z_index le plus élevé) : aucune barre, carte ou panneau
+## ne peut recouvrir un message, y compris la fiche de détail ouverte.
+func _build_notifications() -> void:
+	_notif_layer = Control.new()
+	_notif_layer.name = "NotificationLayer"
+	_notif_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_notif_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_notif_layer.z_index = Z_NOTIF
+	add_child(_notif_layer)
+
 	_toast_panel = PanelContainer.new()
+	_toast_panel.name = "ToastPanel"
 	_toast_panel.anchor_left = 0.5
 	_toast_panel.anchor_right = 0.5
 	_toast_panel.anchor_top = 1.0
 	_toast_panel.anchor_bottom = 1.0
-	_toast_panel.offset_bottom = -(NAV_H + 14)
+	_toast_panel.offset_bottom = _toast_rest_offset()
 	_toast_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_toast_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast = UI.label("", 13, Color.WHITE, true)
+	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_toast_panel.add_child(_toast)
+	_toast_panel.modulate.a = 0.0
+	_notif_layer.add_child(_toast_panel)
+	_apply_toast_style()
+
+func _toast_rest_offset() -> float:
+	return float(-(NAV_H + 14))
+
+func _apply_toast_style() -> void:
+	if _toast_panel == null:
+		return
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.063, 0.094, 0.157, 0.94)
+	sb.bg_color = Color(0.063, 0.094, 0.157, 1.0) if UI.transparency_reduced else Color(0.063, 0.094, 0.157, 0.94)
 	sb.set_corner_radius_all(20)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(1, 1, 1, 0.24) if UI.transparency_reduced else Color(1, 1, 1, 0.10)
 	sb.content_margin_left = 16
 	sb.content_margin_right = 16
 	sb.content_margin_top = 9
 	sb.content_margin_bottom = 9
 	_toast_panel.add_theme_stylebox_override("panel", sb)
-	_toast = UI.label("", 13, Color.WHITE, true)
-	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast_panel.add_child(_toast)
-	_toast_panel.modulate.a = 0.0
-	add_child(_toast_panel)
 
+## Apparition : fondu + léger glissement vers le haut. Disparition en fondu.
 func _show_toast(message: String) -> void:
 	if _toast == null:
 		return
 	_toast.text = message
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()
+	var rest := _toast_rest_offset()
+	_toast_panel.modulate.a = 0.0
+	_toast_panel.offset_bottom = rest - 10.0
 	_toast_tween = create_tween()
-	_toast_tween.tween_property(_toast_panel, "modulate:a", 1.0, 0.18)
-	_toast_tween.tween_interval(1.6)
+	_toast_tween.tween_property(_toast_panel, "modulate:a", 1.0, 0.16)
+	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)

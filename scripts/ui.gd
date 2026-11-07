@@ -292,6 +292,9 @@ static func back_button(text: String = "Retour") -> Button:
 	b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 10, 0, Color(0, 0, 0, 0), 6))
 	b.add_theme_stylebox_override("pressed", stylebox(BORDER, 10, 0, Color(0, 0, 0, 0), 6))
+	b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
+	b.add_theme_color_override("font_disabled_color", TEXT_3)
+	b.add_theme_color_override("icon_disabled_color", TEXT_3)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
@@ -388,8 +391,11 @@ static func info_card(pairs: Array) -> PanelContainer:
 			v.add_child(separator())
 		var row := hbox(10)
 		row.add_child(label(str(pairs[i][0]), 13, TEXT_2))
-		row.add_child(spacer())
-		row.add_child(label(str(pairs[i][1]), 13, TEXT, true))
+		# Valeur alignée à droite, extensible et repliable : jamais hors écran.
+		var val := label(str(pairs[i][1]), 13, TEXT, true, true)
+		val.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		row.add_child(val)
 		v.add_child(row)
 	p.add_child(v)
 	return p

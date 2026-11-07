@@ -6,6 +6,9 @@ extends Node
 signal data_changed
 signal selection_changed
 signal toast(message: String)
+## Indicateur de chargement global (spinner centré) pour les actions longues.
+signal busy_started(message: String)
+signal busy_finished
 signal loading_changed(is_loading: bool)
 signal fetch_finished(ok: bool, message: String, source: String)
 ## Réglage d'accessibilité (transparence réduite) modifié.
@@ -30,9 +33,10 @@ var selected_id: String = ""
 var last_sync_at: String = ""
 ## Failles mises de côté (signet), indépendant des favoris logiciels.
 var saved_ids: Array = []
-## Filtres personnalisés enregistrés par l'utilisateur.
-var filter_presets: Array = []
 var _sync_timer: Timer
+var _test_timer: Timer
+var _live_timer: Timer
+var _syncing := false
 
 var auth: AuthClient
 
@@ -56,6 +60,27 @@ func _ready() -> void:
 
 	# Notifications réelles du téléphone (sans effet sur ordinateur).
 	NotificationService.setup(self)
+	Loc.setup(self)
+	Loc.lang = str(settings.get("language", "fr"))
+
+	# Session précédente : on reste connecté au prochain lancement.
+	_restore_session()
+
+	# Notification de test (une par minute) pour vérifier le système.
+	_test_timer = Timer.new()
+	_test_timer.name = "TestNotificationTimer"
+	_test_timer.wait_time = 60.0
+	_test_timer.autostart = true
+	_test_timer.timeout.connect(_send_test_notification)
+	add_child(_test_timer)
+
+	# Actualisation en direct : un autre appareil du même compte.
+	_live_timer = Timer.new()
+	_live_timer.name = "LiveRefreshTimer"
+	_live_timer.wait_time = 20.0
+	_live_timer.autostart = true
+	_live_timer.timeout.connect(_live_refresh)
+	add_child(_live_timer)
 	add_child(auth)
 
 	_nvd_provider = NvdProvider.new()
@@ -102,6 +127,22 @@ func _on_auth_state() -> void:
 		settings["last_display_name"] = auth.display_name()
 		save_data()
 	auth_changed.emit()
+
+## Indicateur de chargement global (utilisé par les écrans).
+func start_busy(message: String) -> void:
+	busy_started.emit(message)
+
+func end_busy() -> void:
+	busy_finished.emit()
+
+func language() -> String:
+	return str(settings.get("language", "fr"))
+
+func set_language(code: String) -> void:
+	settings["language"] = code
+	Loc.lang = code
+	save_data()
+	toast.emit("Langue : " + ("Français" if code == "fr" else "English"))
 
 func is_reduce_transparency() -> bool:
 	return bool(settings.get("reduce_transparency", false))
@@ -184,13 +225,11 @@ func load_local() -> void:
 				var sv: Variant = d.get("saved", null)
 				if typeof(sv) == TYPE_ARRAY:
 					saved_ids = sv
-				var ps: Variant = d.get("presets", null)
-				if typeof(ps) == TYPE_ARRAY:
-					filter_presets = ps
 			elif txt.strip_edges() != "":
 				push_warning("FaillesCheck : sauvegarde illisible, état conservé.")
 	_ensure_client_id()
 	UI.transparency_reduced = is_reduce_transparency()
+	Loc.lang = str(settings.get("language", "fr"))
 	data_changed.emit()
 
 ## Étape 2 : catalogue hors ligne construit depuis le cache local.
@@ -207,7 +246,6 @@ func _write_file() -> void:
 		"settings": settings,
 		"software": software,
 		"saved": saved_ids,
-		"presets": filter_presets,
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f != null:
@@ -328,6 +366,14 @@ func clear_cache() -> void:
 ## Coroutine : échange avec Supabase (profiles + user_software) pour
 ## l'utilisateur connecté. Les règles RLS s'appliquent côté serveur.
 func sync_now() -> Dictionary:
+	if _syncing:
+		return {"ok": false, "error": "Synchronisation déjà en cours.", "pushed": 0, "merged": 0}
+	_syncing = true
+	var out := await _sync_now_inner()
+	_syncing = false
+	return out
+
+func _sync_now_inner() -> Dictionary:
 	if not SyncProvider.is_configured():
 		return {"ok": false, "error": "Service distant non configuré.", "pushed": 0, "merged": 0}
 	if not auth.is_signed_in():
@@ -386,7 +432,10 @@ func sync_now() -> Dictionary:
 func _push_remote(item: Dictionary) -> void:
 	if not SyncProvider.is_configured() or not auth.is_signed_in():
 		return
-	await _sync.save_software(auth.user_id(), auth.access_token, item)
+	var res: Dictionary = await _sync.save_software(auth.user_id(), auth.access_token, item)
+	if bool(res.get("ok", false)):
+		item["remote"] = true
+		save_data()
 
 func _delete_remote(app_name: String) -> void:
 	if not SyncProvider.is_configured() or not auth.is_signed_in():
@@ -427,32 +476,6 @@ func toggle_saved(id: String) -> void:
 func saved_count() -> int:
 	return saved_ids.size()
 
-# --- Filtres personnalisés --------------------------------------------------
-func save_filter_preset(preset_label: String, filters: Dictionary) -> void:
-	var n := preset_label.strip_edges()
-	if n == "":
-		toast.emit("Donnez un nom au filtre")
-		return
-	for p in filter_presets:
-		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")).to_lower() == n.to_lower():
-			p["filters"] = filters.duplicate(true)
-			save_data()
-			toast.emit("Filtre mis à jour")
-			return
-	filter_presets.append({"name": n, "filters": filters.duplicate(true)})
-	save_data()
-	toast.emit("Filtre enregistré")
-
-func delete_filter_preset(preset_label: String) -> void:
-	var kept: Array = []
-	for p in filter_presets:
-		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")) == preset_label:
-			continue
-		kept.append(p)
-	filter_presets = kept
-	save_data()
-	toast.emit("Filtre supprimé")
-
 # --- Notes personnelles ----------------------------------------------------
 func note_for(id: String) -> String:
 	for s in software:
@@ -467,6 +490,84 @@ func set_note(id: String, text: String) -> void:
 			save_data()
 			toast.emit("Note enregistrée")
 			return
+
+# --- Session, notifications de test, actualisation en direct ---------------
+func _restore_session() -> void:
+	# Les nœuds réseau doivent être dans l'arbre avant toute requête.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await auth.restore_session()
+	if auth.is_signed_in():
+		auth_changed.emit()
+		await sync_now()
+
+func _send_test_notification() -> void:
+	if not bool(settings.get("test_notifications", true)):
+		return
+	var now := Time.get_time_string_from_system()
+	NotificationService.notify("FaillesCheck — test", "Notification de test envoyée à %s." % now)
+	toast.emit("Notification de test envoyée (%s)" % now)
+
+## Récupère l'état distant : un logiciel supprimé sur un autre appareil
+## disparaît ici aussi, et les ajouts arrivent automatiquement.
+func _live_refresh() -> void:
+	if not auth.is_signed_in() or _loading or _syncing:
+		return
+	var uid := auth.user_id()
+	var token := auth.access_token
+	if uid == "" or token == "":
+		return
+	var res: Dictionary = await _sync.pull_software(uid, token)
+	if not bool(res.get("ok", false)):
+		return
+	var rows: Variant = res.get("items", [])
+	if typeof(rows) != TYPE_ARRAY:
+		return
+	var remote_names: Array = []
+	for r in rows:
+		if typeof(r) == TYPE_DICTIONARY:
+			remote_names.append(str((r as Dictionary).get("name", "")).strip_edges().to_lower())
+	var changed := false
+	# Suppressions faites ailleurs.
+	var kept: Array = []
+	for s in software:
+		if typeof(s) != TYPE_DICTIONARY:
+			continue
+		var n := str(s.get("name", "")).strip_edges().to_lower()
+		if bool(s.get("remote", false)) and n != "" and not remote_names.has(n):
+			changed = true
+			continue
+		kept.append(s)
+	if changed:
+		software = kept
+	# Ajouts faits ailleurs.
+	for r in rows:
+		if typeof(r) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = r
+		var rn := str(row.get("name", "")).strip_edges()
+		if rn == "":
+			continue
+		var exists := false
+		for s in software:
+			if typeof(s) == TYPE_DICTIONARY and str(s.get("name", "")).strip_edges().to_lower() == rn.to_lower():
+				exists = true
+				break
+		if exists:
+			continue
+		software.append({
+			"id": "sw-" + str(Time.get_unix_time_from_system()) + "-" + str(software.size()),
+			"name": rn,
+			"editor": str(row.get("publisher", "")),
+			"version": str(row.get("version", "")),
+			"identifier": "",
+			"favorite": bool(row.get("is_favorite", false)),
+			"note": "",
+		})
+		changed = true
+	if changed:
+		save_data()
+		toast.emit("Liste mise à jour depuis un autre appareil")
 
 # --- Synchronisation automatique -------------------------------------------
 func _auto_sync() -> void:

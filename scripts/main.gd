@@ -17,6 +17,7 @@ var _software_sheet: SoftwareSheet
 var _filter_sheet: FilterSheet
 var _confirm_sheet: ConfirmSheet
 var _account_sheet: AccountSheet
+var _share_sheet: ShareSheet
 var _transition: Tween
 var _login_prompted := false
 var _loader: AppLoader
@@ -46,18 +47,21 @@ func _ready() -> void:
 	theme = UI.build_theme()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_defs = [
-		{"title": "Accueil", "short": "Accueil", "icon": UI.ICON_HOME, "page": HomePage},
-		{"title": "Recherche", "short": "Recherche", "icon": UI.ICON_SEARCH, "page": SearchPage},
-		{"title": "Mes logiciels", "short": "Logiciels", "icon": UI.ICON_APPS, "page": SoftwarePage},
-		{"title": "Paramètres", "short": "Paramètres", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
+		{"title": "Accueil", "short": "tab_home", "icon": UI.ICON_HOME, "page": HomePage},
+		{"title": "Recherche", "short": "tab_search", "icon": UI.ICON_SEARCH, "page": SearchPage},
+		{"title": "Mes logiciels", "short": "tab_software", "icon": UI.ICON_APPS, "page": SoftwarePage},
+		{"title": "Paramètres", "short": "tab_settings", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
 	]
 	_build_background()
 	_build_pages()
 	_build_nav()
 	_build_sheet()
 	_build_notifications()
+	_build_busy_layer()
 	_build_loading()
 	DataStore.toast.connect(_show_toast)
+	DataStore.busy_started.connect(_show_busy)
+	DataStore.busy_finished.connect(_hide_busy)
 	DataStore.accessibility_changed.connect(_on_accessibility_changed)
 	_switch_to(0, true)
 	_start_loading()
@@ -116,7 +120,7 @@ func _build_nav() -> void:
 	row.add_theme_constant_override("separation", 2)
 	_nav_layer.add_child(row)
 	for i in _defs.size():
-		row.add_child(_make_nav_item(str(_defs[i]["short"]), str(_defs[i]["icon"]), i))
+		row.add_child(_make_nav_item(Loc.t(str(_defs[i]["short"])), str(_defs[i]["icon"]), i))
 
 func _make_nav_item(title: String, icon_svg: String, index: int) -> Button:
 	var b := Button.new()
@@ -196,6 +200,8 @@ func _on_accessibility_changed() -> void:
 
 ## Ferme tous les panneaux superposés (changement d'onglet, retour).
 func _close_all_sheets() -> void:
+	if _share_sheet != null and _share_sheet.is_open():
+		_share_sheet.close()
 	if _confirm_sheet != null and _confirm_sheet.is_open():
 		_confirm_sheet.close()
 	if _account_sheet != null and _account_sheet.is_open():
@@ -214,6 +220,27 @@ func _close_keyboard() -> void:
 		vp.gui_release_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_hide()
+
+## Un appui en dehors du champ actif ferme le clavier (comme sur iOS).
+func _input(event: InputEvent) -> void:
+	var pos := Vector2.ZERO
+	var pressed := false
+	if event is InputEventScreenTouch:
+		pressed = (event as InputEventScreenTouch).pressed
+		pos = (event as InputEventScreenTouch).position
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		pressed = mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT
+		pos = mb.global_position
+	if not pressed:
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus == null:
+		return
+	if not (focus is LineEdit or focus is TextEdit):
+		return
+	if not focus.get_global_rect().has_point(pos):
+		_close_keyboard()
 
 func _on_nav_pressed(index: int) -> void:
 	_close_keyboard()
@@ -236,6 +263,7 @@ func _build_sheet() -> void:
 	_sheet = DetailSheet.new()
 	_sheet.name = "DetailSheet"
 	_sheet.z_index = Z_SHEET
+	_sheet.share_requested.connect(_on_share_requested)
 	add_child(_sheet)
 
 	_software_sheet = SoftwareSheet.new()
@@ -251,6 +279,11 @@ func _build_sheet() -> void:
 	_filter_sheet.applied.connect(_on_filters_applied)
 	add_child(_filter_sheet)
 
+	_share_sheet = ShareSheet.new()
+	_share_sheet.name = "ShareSheet"
+	_share_sheet.z_index = Z_SHEET + 6
+	add_child(_share_sheet)
+
 	_confirm_sheet = ConfirmSheet.new()
 	_confirm_sheet.name = "ConfirmSheet"
 	_confirm_sheet.z_index = Z_SHEET + 5
@@ -260,6 +293,10 @@ func _build_sheet() -> void:
 	_account_sheet.name = "AccountSheet"
 	_account_sheet.z_index = Z_SHEET
 	add_child(_account_sheet)
+
+func _on_share_requested(v: Dictionary) -> void:
+	_close_keyboard()
+	_share_sheet.show_for(v)
 
 func open_account_sheet() -> void:
 	_close_keyboard()
@@ -475,10 +512,20 @@ func _on_load_completed(with_warnings: bool, summary: String) -> void:
 	_loading_spinner.visible = false
 	await get_tree().create_timer(0.45).timeout
 	_hide_loading()
+	_refresh_nav_labels()
 	_refresh_in_background()
 	_maybe_ask_login()
 
 ## Mise à jour réelle en arrière-plan : l'interface est déjà utilisable.
+## Applique la langue choisie aux libellés de la barre d'onglets.
+func _refresh_nav_labels() -> void:
+	for i in _nav_labels.size():
+		if is_instance_valid(_nav_labels[i]) and i < _defs.size():
+			_nav_labels[i].text = Loc.t(str(_defs[i]["short"]))
+	for i in _pages.size():
+		if is_instance_valid(_pages[i]) and _pages[i].has_method("refresh"):
+			_pages[i].refresh()
+
 func _refresh_in_background() -> void:
 	if not DataStore.is_online():
 		return
@@ -505,6 +552,10 @@ func _maybe_ask_login() -> void:
 		return
 	if not DataStore.auth.is_configured():
 		return
+	# Une session enregistrée est peut-être en cours de restauration : on attend
+	# le résultat avant d'afficher quoi que ce soit.
+	if DataStore.auth.is_restoring():
+		await DataStore.auth.restore_finished
 	if DataStore.auth.is_signed_in():
 		return
 	_login_prompted = true
@@ -557,6 +608,79 @@ func _apply_toast_style() -> void:
 	sb.content_margin_bottom = 9
 	_toast_panel.add_theme_stylebox_override("panel", sb)
 
+# --- Indicateur de chargement global (actions longues) ---------------------
+var _busy_layer: Control
+var _busy_label: Label
+var _busy_spinner: Spinner
+var _busy_tween: Tween
+
+func _build_busy_layer() -> void:
+	_busy_layer = Control.new()
+	_busy_layer.name = "BusyLayer"
+	_busy_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_busy_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	_busy_layer.z_index = Z_NOTIF - 1
+	_busy_layer.visible = false
+	add_child(_busy_layer)
+
+	var veil := ColorRect.new()
+	veil.color = Color(0.03, 0.05, 0.10, 0.28)
+	veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_busy_layer.add_child(veil)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_busy_layer.add_child(center)
+
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _busy_card_style())
+	center.add_child(card)
+	var h := UI.hbox(12)
+	_busy_spinner = Spinner.new(22, UI.ACCENT)
+	_busy_spinner.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(_busy_spinner)
+	_busy_label = UI.label("", 13, UI.TEXT, true)
+	_busy_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(_busy_label)
+	card.add_child(h)
+
+func _busy_card_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 1) if UI.transparency_reduced else Color(1, 1, 1, 0.97)
+	sb.set_corner_radius_all(18)
+	sb.border_color = UI.BORDER
+	sb.set_border_width_all(1)
+	sb.shadow_color = Color(0, 0, 0, 0.18)
+	sb.shadow_size = 16
+	sb.content_margin_left = 20
+	sb.content_margin_right = 22
+	sb.content_margin_top = 16
+	sb.content_margin_bottom = 16
+	return sb
+
+func _show_busy(message: String) -> void:
+	if _busy_layer == null:
+		return
+	_busy_label.text = message
+	_busy_layer.visible = true
+	_busy_layer.modulate.a = 0.0
+	if _busy_tween != null and _busy_tween.is_valid():
+		_busy_tween.kill()
+	_busy_tween = create_tween()
+	_busy_tween.tween_property(_busy_layer, "modulate:a", 1.0, 0.16)
+
+func _hide_busy() -> void:
+	if _busy_layer == null or not _busy_layer.visible:
+		return
+	if _busy_tween != null and _busy_tween.is_valid():
+		_busy_tween.kill()
+	_busy_tween = create_tween()
+	_busy_tween.tween_property(_busy_layer, "modulate:a", 0.0, 0.2)
+	_busy_tween.tween_callback(func() -> void:
+		_busy_layer.visible = false)
+
 ## Apparition : fondu + léger glissement vers le haut. Disparition en fondu.
 func _show_toast(message: String) -> void:
 	if _toast == null:
@@ -574,6 +698,8 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
+
+
 
 
 

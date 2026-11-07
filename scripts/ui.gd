@@ -134,6 +134,9 @@ static func label(text: String, size: int = 15, color: Color = TEXT, bold: bool 
 	l.add_theme_color_override("font_color", _readable(color))
 	l.add_theme_font_override("font", font_bold() if bold else font_reg())
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if should_wrap else TextServer.AUTOWRAP_OFF
+	# Un libellé qui passe à la ligne occupe toute la largeur disponible.
+	if should_wrap:
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 

@@ -13,6 +13,11 @@ var _current: int = -1
 var _pages_layer: Control
 var _nav_layer: PanelContainer
 var _sheet: DetailSheet
+var _software_sheet: SoftwareSheet
+var _filter_sheet: FilterSheet
+var _confirm_sheet: ConfirmSheet
+var _account_sheet: AccountSheet
+var _transition: Tween
 var _loader: AppLoader
 var _loading_layer: Control
 var _loading_bar: ProgressBar
@@ -128,13 +133,12 @@ func _make_nav_item(title: String, icon_svg: String, index: int) -> Button:
 
 	# Pastille de sélection (style iOS moderne) derrière l'icône de l'onglet actif.
 	var pill := PanelContainer.new()
-	pill.custom_minimum_size = Vector2(58, 34)
+	pill.custom_minimum_size = Vector2(74, 46)
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pill.add_theme_stylebox_override("panel", _nav_pill_style())
 	pill.visible = false
 	var pcenter := CenterContainer.new()
 	pcenter.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	pcenter.offset_top = -12
 	pcenter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pcenter.add_child(pill)
 	b.add_child(pcenter)
@@ -190,9 +194,28 @@ func _on_accessibility_changed() -> void:
 	_apply_nav_style()
 	_apply_toast_style()
 
-func _on_nav_pressed(index: int) -> void:
+## Ferme tous les panneaux superposés (changement d'onglet, retour).
+func _close_all_sheets() -> void:
+	if _confirm_sheet != null and _confirm_sheet.is_open():
+		_confirm_sheet.close()
+	if _filter_sheet != null and _filter_sheet.is_open():
+		_filter_sheet.close()
+	if _software_sheet != null and _software_sheet.is_open():
+		_software_sheet.close()
 	if _sheet != null and _sheet.is_open():
 		_sheet.close()
+
+## Ferme le clavier virtuel (iOS) et retire le focus de saisie.
+func _close_keyboard() -> void:
+	var vp := get_viewport()
+	if vp != null:
+		vp.gui_release_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_hide()
+
+func _on_nav_pressed(index: int) -> void:
+	_close_keyboard()
+	_close_all_sheets()
 	var dir := 1 if index >= _current else -1
 	_switch_to(index, false, dir)
 
@@ -213,11 +236,82 @@ func _build_sheet() -> void:
 	_sheet.z_index = Z_SHEET
 	add_child(_sheet)
 
+	_software_sheet = SoftwareSheet.new()
+	_software_sheet.name = "SoftwareSheet"
+	_software_sheet.z_index = Z_SHEET
+	_software_sheet.favorite_toggled.connect(_on_software_favorite)
+	_software_sheet.delete_requested.connect(confirm_delete_software)
+	add_child(_software_sheet)
+
+	_filter_sheet = FilterSheet.new()
+	_filter_sheet.name = "FilterSheet"
+	_filter_sheet.z_index = Z_SHEET
+	_filter_sheet.applied.connect(_on_filters_applied)
+	add_child(_filter_sheet)
+
+	_confirm_sheet = ConfirmSheet.new()
+	_confirm_sheet.name = "ConfirmSheet"
+	_confirm_sheet.z_index = Z_SHEET + 1
+	add_child(_confirm_sheet)
+
+	_account_sheet = AccountSheet.new()
+	_account_sheet.name = "AccountSheet"
+	_account_sheet.z_index = Z_SHEET
+	add_child(_account_sheet)
+
+func open_account_sheet() -> void:
+	_close_keyboard()
+	_account_sheet.open_account()
+
+# --- Panneaux secondaires --------------------------------------------------
+func open_software_sheet(id: String) -> void:
+	for s in DataStore.software:
+		if str(s.get("id", "")) == id:
+			_close_keyboard()
+			_software_sheet.show_software(s)
+			return
+
+func _on_software_favorite(id: String) -> void:
+	DataStore.toggle_favorite(id)
+	for s in DataStore.software:
+		if str(s.get("id", "")) == id:
+			_software_sheet.show_software(s)
+			return
+
+## Confirmation explicite avant toute suppression.
+func confirm_delete_software(id: String) -> void:
+	var app_name := ""
+	for s in DataStore.software:
+		if str(s.get("id", "")) == id:
+			app_name = str(s.get("name", ""))
+			break
+	if app_name == "":
+		return
+	_close_keyboard()
+	_confirm_sheet.ask("Supprimer ce logiciel ?",
+		"« %s » sera retiré de votre liste. Cette action est définitive." % app_name,
+		"Supprimer", func() -> void:
+			DataStore.remove_software(id)
+			if _software_sheet.is_open():
+				_software_sheet.close())
+
+func open_filter_sheet(severities: Array, software_ids: Array) -> void:
+	_close_keyboard()
+	_filter_sheet.open_with(severities, software_ids)
+
+func _on_filters_applied(severities: Array, software_ids: Array) -> void:
+	for p in _pages:
+		if p is SearchPage:
+			(p as SearchPage).apply_filters(severities, software_ids)
+			return
+
 ## Ouverture du détail par-dessus l'écran courant (Accueil ou Recherche).
 func open_detail_sheet(id: String) -> void:
 	var v := DataStore.get_vulnerability(id)
 	if v.is_empty():
 		return
+	# Le clavier est refermé avant l'ouverture du panneau.
+	_close_keyboard()
 	DataStore.select(id)
 	_sheet.show_detail(v)
 
@@ -229,43 +323,53 @@ func go_back() -> void:
 # --- Transitions -----------------------------------------------------------
 ## dir = 1 : avant (entre par la droite) ; dir = -1 : retour (entre par la gauche).
 func _switch_to(index: int, instant: bool = false, dir: int = 1) -> void:
-	if index == _current or index < 0 or index >= _pages.size():
+	if index < 0 or index >= _pages.size() or index == _current:
 		return
-	var prev := _current
+	# Une seule transition à la fois : la précédente est annulée et son état
+	# final est appliqué immédiatement (aucun écran gris possible).
+	if _transition != null and _transition.is_valid():
+		_transition.kill()
+	_transition = null
+	for i in _pages.size():
+		if i != index:
+			_finalize_hidden(_pages[i])
+
 	_current = index
 	var page := _pages[index]
 	page.visible = true
 	page.z_index = 1
-
-	if prev >= 0:
-		var old := _pages[prev]
-		old.z_index = 0
-		if instant:
-			_hide_page(old)
-		else:
-			var t := create_tween().set_parallel(true)
-			t.tween_property(old, "modulate:a", 0.0, 0.16)
-			t.tween_property(old, "position:x", -26.0 * dir, 0.16)
-			t.chain().tween_callback(_hide_page.bind(old))
-
 	page.modulate = Color(1, 1, 1, 1)
 	page.position.x = 0.0
+
 	if instant:
 		page.modulate.a = 1.0
 	else:
 		page.modulate.a = 0.0
 		page.position.x = 26.0 * dir
-		var t2 := create_tween().set_parallel(true)
-		t2.tween_property(page, "modulate:a", 1.0, 0.22)
-		t2.tween_property(page, "position:x", 0.0, 0.22)
+		_transition = create_tween().set_parallel(true)
+		_transition.tween_property(page, "modulate:a", 1.0, 0.22)
+		_transition.tween_property(page, "position:x", 0.0, 0.22)
+		_transition.chain().tween_callback(_ensure_single_visible.bind(index))
 
 	_update_nav()
 
-func _hide_page(page: Control) -> void:
+func _finalize_hidden(page: Control) -> void:
 	page.visible = false
 	page.position.x = 0.0
 	page.modulate = Color(1, 1, 1, 1)
 	page.z_index = 0
+
+## État de secours : garantit qu'un seul écran reste visible.
+func _ensure_single_visible(index: int) -> void:
+	for i in _pages.size():
+		var p := _pages[i]
+		if i == index:
+			p.visible = true
+			p.modulate = Color(1, 1, 1, 1)
+			p.position.x = 0.0
+			p.z_index = 1
+		else:
+			_finalize_hidden(p)
 
 # --- Écran de chargement (réel) --------------------------------------------
 func _build_loading() -> void:
@@ -471,6 +575,8 @@ func _apply_toast_style() -> void:
 func _show_toast(message: String) -> void:
 	if _toast == null:
 		return
+	if not DataStore.notifications_enabled():
+		return
 	_toast.text = message
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()
@@ -482,3 +588,4 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
+

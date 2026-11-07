@@ -10,10 +10,17 @@ signal loading_changed(is_loading: bool)
 signal fetch_finished(ok: bool, message: String, source: String)
 ## Réglage d'accessibilité (transparence réduite) modifié.
 signal accessibility_changed
+## État du compte utilisateur modifié (connexion, déconnexion, profil).
+signal auth_changed
 
 const SAVE_PATH := "user://faillescheck_save.json"
 const SAVE_VERSION := 3
-const DEFAULT_SETTINGS := {"demo_data": false, "online": false, "client_id": "", "reduce_transparency": false}
+const DEFAULT_SETTINGS := {
+	"client_id": "",
+	"online": true,
+	"reduce_transparency": false,
+	"notifications": true,
+}
 const MAX_RESULTS := 25
 
 var settings: Dictionary = DEFAULT_SETTINGS.duplicate(true)
@@ -22,16 +29,18 @@ var vulnerabilities: Array = []
 var selected_id: String = ""
 var last_sync_at: String = ""
 
-var _demo_provider: DemoProvider
+var auth: AuthClient
+
 var _nvd_provider: NvdProvider
 var _sync: SyncProvider
 var _catalog: SoftwareCatalog
 var _loading := false
 
 func _ready() -> void:
-	_demo_provider = DemoProvider.new()
-	_demo_provider.name = "DemoProvider"
-	add_child(_demo_provider)
+	auth = AuthClient.new()
+	auth.name = "AuthClient"
+	auth.state_changed.connect(func() -> void: auth_changed.emit())
+	add_child(auth)
 
 	_nvd_provider = NvdProvider.new()
 	_nvd_provider.name = "NvdProvider"
@@ -47,11 +56,19 @@ func _ready() -> void:
 	add_child(_catalog)
 
 # --- Accès -----------------------------------------------------------------
-func is_demo() -> bool:
-	return bool(settings.get("demo_data", false))
-
+## Aucune donnée fictive : la source réelle (NVD) et son cache local sont les
+## seules origines possibles.
 func is_online() -> bool:
-	return bool(settings.get("online", false))
+	return bool(settings.get("online", true))
+
+func notifications_enabled() -> bool:
+	return bool(settings.get("notifications", true))
+
+func set_notifications(value: bool) -> void:
+	settings["notifications"] = value
+	save_data()
+	if value:
+		toast.emit("Notifications activées")
 
 func is_loading() -> bool:
 	return _loading
@@ -91,8 +108,6 @@ func severity_keys() -> Array:
 	return ["critique", "elevee", "moyenne", "faible"]
 
 func source_label() -> String:
-	if is_demo():
-		return "DÉMO · FICTIF"
 	for v in vulnerabilities:
 		if not bool(v.get("demo", false)):
 			return "NVD (NIST)"
@@ -178,19 +193,11 @@ func reset_all() -> void:
 	toast.emit("Données réinitialisées")
 
 # --- Sources de données ----------------------------------------------------
+## Catalogue = uniquement les données réelles récupérées (cache local).
 func rebuild() -> void:
-	if is_demo():
-		vulnerabilities = DemoProvider.catalog()
-	else:
-		vulnerabilities = VulnCache.all_items()
+	vulnerabilities = VulnCache.all_items()
 	if selected_id != "" and get_vulnerability(selected_id).is_empty():
 		selected_id = ""
-
-func set_demo(value: bool) -> void:
-	settings["demo_data"] = value
-	rebuild()
-	save_data()
-	toast.emit("Données de démonstration activées" if value else "Données de démonstration désactivées")
 
 func set_online(value: bool) -> void:
 	settings["online"] = value
@@ -227,9 +234,8 @@ func _on_nvd_completed(results: Array, meta: Dictionary) -> void:
 	var ok := bool(meta.get("ok", false))
 	if ok and not results.is_empty():
 		VulnCache.merge(results)
-		if not is_demo():
-			rebuild()
-			data_changed.emit()
+		rebuild()
+		data_changed.emit()
 	var message := ""
 	if ok:
 		message = "%d vulnérabilité(s) récupérée(s)." % results.size()
@@ -253,34 +259,41 @@ func cache_info() -> Dictionary:
 
 func clear_cache() -> void:
 	VulnCache.clear()
-	if not is_demo():
-		rebuild()
-		data_changed.emit()
+	rebuild()
+	data_changed.emit()
 	toast.emit("Cache vidé")
 
 # --- Synchronisation distante ----------------------------------------------
-## Coroutine : échange avec la base distante (Supabase) si elle est configurée.
+## Coroutine : échange avec Supabase (profiles + user_software) pour
+## l'utilisateur connecté. Les règles RLS s'appliquent côté serveur.
 func sync_now() -> Dictionary:
 	if not SyncProvider.is_configured():
-		return {"ok": false, "error": "Synchronisation distante non configurée.", "pushed": 0, "merged": 0}
-	var cid := client_id()
-	var pulled: Dictionary = await _sync.pull_software(cid)
+		return {"ok": false, "error": "Service distant non configuré.", "pushed": 0, "merged": 0}
+	if not auth.is_signed_in():
+		return {"ok": false, "error": "Connectez-vous pour synchroniser.", "pushed": 0, "merged": 0}
+	var uid := auth.user_id()
+	var token := auth.access_token
+	if uid == "" or token == "":
+		return {"ok": false, "error": "Session invalide.", "pushed": 0, "merged": 0}
+
+	# Profil (créé s'il n'existe pas encore).
+	await _sync.upsert_profile(uid, token, auth.display_name())
+
+	var pulled: Dictionary = await _sync.pull_software(uid, token)
 	if not bool(pulled.get("ok", false)):
 		return {"ok": false, "error": str(pulled.get("error", "Récupération distante impossible.")), "pushed": 0, "merged": 0}
 
 	var remote_items: Array = pulled.get("items", [])
-	var remote_ids := {}
+	var remote_names := {}
 	for r in remote_items:
 		if typeof(r) == TYPE_DICTIONARY:
-			remote_ids[str(r.get("local_id", ""))] = true
+			remote_names[str(r.get("name", "")).strip_edges().to_lower()] = true
 
 	var pushed := 0
 	for item in software:
 		if typeof(item) != TYPE_DICTIONARY:
 			continue
-		if remote_ids.has(str(item.get("id", ""))):
-			continue
-		var res: Dictionary = await _sync.push_software(cid, item)
+		var res: Dictionary = await _sync.save_software(uid, token, item)
 		if bool(res.get("ok", false)):
 			pushed += 1
 
@@ -291,15 +304,13 @@ func sync_now() -> Dictionary:
 		var rname := str(r.get("name", "")).strip_edges()
 		if rname == "" or _find_software_by_name(rname) != null:
 			continue
-		var local_id := str(r.get("local_id", ""))
-		if local_id == "":
-			local_id = "SW-R-%d" % (randi() % 1000000)
 		software.append({
-			"id": local_id,
+			"id": "SW-R-%d" % (randi() % 1000000),
 			"name": rname,
 			"version": str(r.get("version", "")),
-			"editor": str(r.get("editor", "")),
-			"identifier": str(r.get("identifier", "")),
+			"editor": str(r.get("publisher", "")),
+			"identifier": "",
+			"favorite": bool(r.get("is_favorite", false)),
 			"remote": true,
 		})
 		merged += 1
@@ -307,22 +318,19 @@ func sync_now() -> Dictionary:
 	if pushed > 0 or merged > 0:
 		save_data()
 
-	# Miroir public des vulnérabilités (non bloquant si refusé).
-	if not vulnerabilities.is_empty():
-		await _sync.push_vulnerabilities(vulnerabilities)
-
 	last_sync_at = Time.get_datetime_string_from_system(false, true)
 	return {"ok": true, "error": "", "pushed": pushed, "merged": merged}
 
+## Envoi d'un logiciel (silencieux : ignoré si non connecté).
 func _push_remote(item: Dictionary) -> void:
-	if not SyncProvider.is_configured():
+	if not SyncProvider.is_configured() or not auth.is_signed_in():
 		return
-	await _sync.push_software(client_id(), item)
+	await _sync.save_software(auth.user_id(), auth.access_token, item)
 
-func _delete_remote(local_id: String) -> void:
-	if not SyncProvider.is_configured():
+func _delete_remote(app_name: String) -> void:
+	if not SyncProvider.is_configured() or not auth.is_signed_in():
 		return
-	await _sync.delete_software(client_id(), local_id)
+	await _sync.delete_software(auth.user_id(), auth.access_token, app_name)
 
 # --- Logiciels -------------------------------------------------------------
 func _find_software_by_name(app_name: String) -> Variant:
@@ -340,6 +348,68 @@ func _find_software_by_identifier(identifier: String) -> Variant:
 			return s
 	return null
 
+# --- Favoris & statistiques (données réelles uniquement) -------------------
+func is_favorite(id: String) -> bool:
+	for s in software:
+		if typeof(s) == TYPE_DICTIONARY and str(s.get("id", "")) == id:
+			return bool(s.get("favorite", false))
+	return false
+
+func toggle_favorite(id: String) -> void:
+	for s in software:
+		if typeof(s) == TYPE_DICTIONARY and str(s.get("id", "")) == id:
+			var now := not bool(s.get("favorite", false))
+			s["favorite"] = now
+			save_data()
+			toast.emit("Ajouté aux favoris" if now else "Retiré des favoris")
+			_push_remote(s)
+			return
+
+func favorites() -> Array:
+	var out: Array = []
+	for s in software:
+		if typeof(s) == TYPE_DICTIONARY and bool(s.get("favorite", false)):
+			out.append(s)
+	return out
+
+## Vulnérabilités réelles rattachées à un logiciel (nom de produit renvoyé
+## par la source). Aucune correspondance inventée.
+func vulns_for_software(app_name: String) -> Array:
+	var target := app_name.strip_edges().to_lower()
+	var out: Array = []
+	if target == "":
+		return out
+	for v in vulnerabilities:
+		var prod := str(v.get("product", "")).strip_edges().to_lower()
+		if prod == "":
+			continue
+		if prod == target or prod.contains(target) or target.contains(prod):
+			out.append(v)
+	return out
+
+## Historique réel : nombre de vulnérabilités publiées par mois, calculé
+## uniquement sur les données récupérées. Vide si la source n'a pas de date.
+func software_history(app_name: String) -> Dictionary:
+	var by_month := {}
+	for v in vulns_for_software(app_name):
+		var d := str(v.get("date", ""))
+		if d.length() < 7:
+			continue
+		var key := d.substr(0, 7)
+		by_month[key] = int(by_month.get(key, 0)) + 1
+	if by_month.is_empty():
+		return {"labels": [], "values": []}
+	var keys: Array = by_month.keys()
+	keys.sort()
+	if keys.size() > 12:
+		keys = keys.slice(keys.size() - 12, keys.size())
+	var labels: Array = []
+	var values: Array = []
+	for k in keys:
+		labels.append(str(k))
+		values.append(int(by_month[k]))
+	return {"labels": labels, "values": values}
+
 ## Retourne "" en cas de succès, sinon un message d'erreur lisible.
 func add_software(app_name: String, version: String, editor: String, identifier: String = "") -> String:
 	var n := app_name.strip_edges()
@@ -355,6 +425,7 @@ func add_software(app_name: String, version: String, editor: String, identifier:
 		"version": version.strip_edges(),
 		"editor": editor.strip_edges(),
 		"identifier": identifier,
+		"favorite": false,
 	}
 	software.append(item)
 	save_data()
@@ -363,11 +434,14 @@ func add_software(app_name: String, version: String, editor: String, identifier:
 	return ""
 
 func remove_software(id: String) -> void:
+	var removed_name := ""
 	for i in range(software.size()):
 		var item: Variant = software[i]
 		if typeof(item) == TYPE_DICTIONARY and str(item.get("id", "")) == id:
+			removed_name = str(item.get("name", ""))
 			software.remove_at(i)
 			break
 	save_data()
 	toast.emit("Logiciel supprimé")
-	_delete_remote(id)
+	if removed_name != "":
+		_delete_remote(removed_name)

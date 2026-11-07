@@ -42,6 +42,9 @@ const ICON_BACK := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 2
 const ICON_GLOBE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\"/><path d=\"M3 12h18M12 3c3.2 3.2 3.2 14.8 0 18M12 3c-3.2 3.2-3.2 14.8 0 18\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.6\"/></svg>"
 const ICON_SPINNER := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M12 2.6a9.4 9.4 0 1 1-6.65 2.72\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2.8\" stroke-linecap=\"round\"/></svg>"
 const ICON_SOFTWARE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2.4\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\"/><path d=\"M8 20h8\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>"
+const ICON_HEART := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" d=\"M12 20.6 4.9 14.2C2.6 12.1 2.2 8.9 4 7.1c1.9-1.9 4.9-1.6 6.6.4l1.4 1.6 1.4-1.6c1.7-2 4.7-2.3 6.6-.4 1.8 1.8 1.4 5-.9 7.1z\"/></svg>"
+const ICON_HEART_OUTLINE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linejoin=\"round\" d=\"M12 20.6 4.9 14.2C2.6 12.1 2.2 8.9 4 7.1c1.9-1.9 4.9-1.6 6.6.4l1.4 1.6 1.4-1.6c1.7-2 4.7-2.3 6.6-.4 1.8 1.8 1.4 5-.9 7.1z\"/></svg>"
+const ICON_FILTER := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M3.5 6.5h17M6.5 12h11M10 17.5h4\"/></g></svg>"
 
 static var _font_reg: SystemFont
 static var _font_bold: SystemFont
@@ -133,6 +136,7 @@ static func label(text: String, size: int = 15, color: Color = TEXT, bold: bool 
 ## Interrupteur style iOS (pilule + curseur animé).
 static func switch_button(on: bool) -> Button:
 	var b := Button.new()
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	b.toggle_mode = true
 	b.button_pressed = on
 	b.custom_minimum_size = Vector2(52, 32)
@@ -225,6 +229,8 @@ static func separator() -> PanelContainer:
 
 static func primary_button(text: String, color: Color = ACCENT) -> Button:
 	var b := Button.new()
+	# PASS : un glissement commencé sur le bouton atteint le ScrollContainer.
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	b.text = text
 	b.add_theme_font_override("font", font_bold())
 	b.add_theme_font_size_override("font_size", 15)
@@ -244,6 +250,7 @@ static func primary_button(text: String, color: Color = ACCENT) -> Button:
 
 static func ghost_button(text: String, color: Color = ACCENT) -> Button:
 	var b := Button.new()
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	b.text = text
 	b.add_theme_font_override("font", font_bold())
 	b.add_theme_font_size_override("font_size", 15)
@@ -271,8 +278,11 @@ static func ghost_icon_button(icon_svg: String, text: String, color: Color = ACC
 	return b
 
 ## Bouton « Retour » compact pour l'en-tête (chevron + libellé).
+## Les marges internes sont identiques dans tous les états : le libellé ne
+## peut jamais être rogné à l'appui.
 static func back_button(text: String = "Retour") -> Button:
 	var b := Button.new()
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	b.text = text
 	b.flat = true
 	b.icon = svg_texture(ICON_BACK, 18)
@@ -289,12 +299,32 @@ static func back_button(text: String = "Retour") -> Button:
 	b.add_theme_color_override("icon_normal_color", ACCENT)
 	b.add_theme_color_override("icon_hover_color", ACCENT)
 	b.add_theme_color_override("icon_pressed_color", ACCENT.darkened(0.15))
-	b.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	b.add_theme_stylebox_override("normal", stylebox(Color(0, 0, 0, 0), 10, 0, Color(0, 0, 0, 0), 6))
 	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 10, 0, Color(0, 0, 0, 0), 6))
 	b.add_theme_stylebox_override("pressed", stylebox(BORDER, 10, 0, Color(0, 0, 0, 0), 6))
-	b.add_theme_stylebox_override("disabled", StyleBoxEmpty.new())
+	b.add_theme_stylebox_override("disabled", stylebox(Color(0, 0, 0, 0), 10, 0, Color(0, 0, 0, 0), 6))
 	b.add_theme_color_override("font_disabled_color", TEXT_3)
 	b.add_theme_color_override("icon_disabled_color", TEXT_3)
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	return b
+
+## Bouton Retour rond, icône seule : aucun texte, donc aucun libellé parasite
+## possible (appui long, rognage) ; contour fin et état appuyé.
+static func back_icon_button(size: int = 40) -> Button:
+	var b := Button.new()
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
+	b.custom_minimum_size = Vector2(size, size)
+	b.focus_mode = Control.FOCUS_NONE
+	b.icon = svg_texture(ICON_BACK, 18)
+	b.add_theme_color_override("icon_normal_color", ACCENT)
+	b.add_theme_color_override("icon_hover_color", ACCENT)
+	b.add_theme_color_override("icon_pressed_color", ACCENT.darkened(0.18))
+	b.add_theme_color_override("icon_disabled_color", TEXT_3)
+	var edge := BORDER_STRONG if transparency_reduced else BORDER
+	b.add_theme_stylebox_override("normal", stylebox(CARD, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("pressed", stylebox(BORDER, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("disabled", stylebox(CARD_SOFT, 13, 1, edge, 0))
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
@@ -325,20 +355,27 @@ static func line_edit(placeholder: String) -> LineEdit:
 	return e
 
 ## Pastille de filtre tactile (glissement transparent, seuil de tap).
-static func chip(text: String, active: bool) -> TapCard:
-	var b := TapCard.new()
-	b.custom_minimum_size = Vector2(0, 34)
+## Applique l'état visuel d'une pastille de filtre (actif / inactif).
+static func style_chip(b: TapCard, active: bool) -> void:
 	var fill := CARD
 	if active:
 		fill = Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.26 if transparency_reduced else 0.14)
 	var edge := ACCENT if active else (BORDER_STRONG if transparency_reduced else BORDER)
-	var normal := stylebox(fill, 17, 1, edge, 14)
-	var hover := stylebox(fill.darkened(0.05), 17, 1, edge, 14)
-	var pressed := stylebox(fill.darkened(0.10), 17, 1, edge, 14)
-	b.set_styles(normal, hover, pressed)
+	b.set_styles(
+		stylebox(fill, 17, 1, edge, 14),
+		stylebox(fill.darkened(0.05), 17, 1, edge, 14),
+		stylebox(fill.darkened(0.10), 17, 1, edge, 14))
+	for c in b.get_children():
+		if c is Label:
+			(c as Label).add_theme_color_override("font_color", ACCENT if active else TEXT_2)
+
+static func chip(text: String, active: bool) -> TapCard:
+	var b := TapCard.new()
+	b.custom_minimum_size = Vector2(0, 34)
 	var l := label(text, 13, ACCENT if active else TEXT_2, true)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.add_child(l)
+	style_chip(b, active)
 	return b
 
 static func badge(text: String, color: Color) -> PanelContainer:
@@ -364,6 +401,14 @@ static func tap_card(height: int = 64, padding: int = 14) -> TapCard:
 		card_style(18, padding),
 		card_style(18, padding, Color(0.985, 0.988, 0.996)),
 		card_style(18, padding, Color(0.945, 0.953, 0.976)))
+	return b
+
+## Zone tactile transparente (sans fond) : utile pour rendre une partie d'une
+## carte cliquable sans imbriquer deux cartes tactiles.
+static func flat_tap() -> TapCard:
+	var b := TapCard.new()
+	var empty := StyleBoxEmpty.new()
+	b.set_styles(empty, empty, empty)
 	return b
 
 static func overlay(btn: Control, node: Control, margin: int = 0) -> void:

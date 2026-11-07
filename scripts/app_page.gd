@@ -4,6 +4,9 @@ extends Control
 
 var content: VBoxContainer
 
+var _scroll: ScrollContainer
+var _pending_scroll := -1.0
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_PASS
@@ -36,9 +39,24 @@ func refresh() -> void:
 func clear_content() -> void:
 	if content == null:
 		return
+	# La position de défilement est mémorisée puis restaurée : une mise à jour
+	# des données ne fait plus « sauter » la page au milieu d'un geste.
+	if _scroll != null:
+		_pending_scroll = float(_scroll.scroll_vertical)
 	for c in content.get_children():
 		content.remove_child(c)
 		c.queue_free()
+	_restore_scroll_deferred()
+
+func _restore_scroll_deferred() -> void:
+	if _pending_scroll < 0.0:
+		return
+	var target := _pending_scroll
+	_pending_scroll = -1.0
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(_scroll):
+		_scroll.scroll_vertical = int(target)
 
 ## En-tête (grand titre iOS) + ScrollContainer + marge latérale.
 func _make_scaffold(title: String, subtitle: String) -> VBoxContainer:
@@ -84,6 +102,7 @@ func _make_scaffold(title: String, subtitle: String) -> VBoxContainer:
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	scroll.scroll_deadzone = 8
 	scroll.follow_focus = true
+	_scroll = scroll
 	root.add_child(scroll)
 
 	var content_margin := MarginContainer.new()

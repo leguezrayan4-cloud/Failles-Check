@@ -34,29 +34,30 @@ func run() -> void:
 	DataStore.refresh_from_cache()
 	await _next_frame()
 
-	if DataStore.is_demo():
-		# Le catalogue de démonstration est local : aucune requête réseau.
-		progress_changed.emit(0.68, "Mode démonstration")
-	elif DataStore.is_online():
-		progress_changed.emit(0.38, "Connexion à la source NVD…")
+	if DataStore.is_online():
+		progress_changed.emit(0.38, "Connexion…")
+		await _next_frame()
+		progress_changed.emit(0.52, "Téléchargement…")
 		var res: Dictionary = await DataStore.fetch_vulnerabilities_async("")
 		if not bool(res.get("ok", false)):
 			_running = false
 			failed.emit(str(res.get("error", "Le chargement distant a échoué.")))
 			return
-		progress_changed.emit(0.68, "%d vulnérabilités (NVD)" % int(res.get("count", 0)))
+		progress_changed.emit(0.78, "Analyse…")
+		await _next_frame()
+		progress_changed.emit(0.86, "%d vulnérabilités" % int(res.get("count", 0)))
 	else:
-		progress_changed.emit(0.68, "Mode hors ligne")
+		progress_changed.emit(0.78, "Mode hors ligne")
 	await _next_frame()
 
-	if SyncProvider.is_configured():
-		progress_changed.emit(0.80, "Synchronisation des logiciels…")
+	if SyncProvider.is_configured() and DataStore.auth.is_signed_in():
+		progress_changed.emit(0.80, "Synchronisation…")
 		var sync_res: Dictionary = await DataStore.sync_now()
 		if not bool(sync_res.get("ok", false)):
 			_warnings.append(str(sync_res.get("error", "synchronisation distante incomplète")))
 	await _next_frame()
 
-	progress_changed.emit(0.94, "Finalisation du catalogue…")
+	progress_changed.emit(0.94, "Affichage…")
 	DataStore.rebuild()
 	DataStore.emit_changed()
 	await _next_frame()

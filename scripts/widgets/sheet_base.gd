@@ -1,27 +1,31 @@
 class_name SheetBase
 extends Control
-## FaillesCheck — base commune des petits panneaux superposés.
-## Voile semi-transparent, panneau arrondi, bouton Retour rond, contenu
-## défilant au doigt, fermeture par glissement vers le bas.
+## FaillesCheck — base commune des panneaux superposés.
+## Voile semi-transparent, panneau arrondi, croix de fermeture à droite,
+## contenu défilant au doigt, fermeture par glissement vers le bas dès que
+## le contenu est en haut (comme les feuilles iOS).
 
 signal closed
 
 const SHEET_RATIO := 0.90
+const PULL_THRESHOLD := 90.0
+const PULL_START := 12.0
 
 var _backdrop: ColorRect
 var _panel: PanelContainer
 var _body: VBoxContainer
+var _scroll: ScrollContainer
 var _is_open := false
 var _tween: Tween
-var _drag_active := false
-var _drag_start_y := 0.0
-var _drag_base_y := 0.0
-var _drag_dy := 0.0
+var _pull_active := false
+var _pull_start := Vector2.ZERO
+var _pull_dy := 0.0
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false
+	set_process_input(true)
 
 	_backdrop = ColorRect.new()
 	_backdrop.name = "SheetBackdrop"
@@ -51,12 +55,12 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(root)
 
+	# Poignée visuelle (le glissement fonctionne depuis tout le panneau).
 	var grab := MarginContainer.new()
 	grab.name = "SheetGrabber"
 	grab.add_theme_constant_override("margin_top", 10)
 	grab.add_theme_constant_override("margin_bottom", 8)
-	grab.mouse_filter = Control.MOUSE_FILTER_STOP
-	grab.gui_input.connect(_on_grabber_input)
+	grab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(grab)
 	var handle := PanelContainer.new()
 	handle.custom_minimum_size = Vector2(42, 5)
@@ -69,31 +73,32 @@ func _ready() -> void:
 	handle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	grab.add_child(handle)
 
+	# Barre : titre à gauche, croix de fermeture à droite.
 	var bar_margin := MarginContainer.new()
-	bar_margin.add_theme_constant_override("margin_left", 14)
+	bar_margin.add_theme_constant_override("margin_left", 20)
 	bar_margin.add_theme_constant_override("margin_right", 14)
-	bar_margin.add_theme_constant_override("margin_bottom", 4)
+	bar_margin.add_theme_constant_override("margin_bottom", 6)
 	bar_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bar_margin)
 	var bar_row := UI.hbox(10)
 	bar_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_margin.add_child(bar_row)
-	var back := UI.back_icon_button(40)
-	back.name = "SheetBackButton"
-	back.pressed.connect(close)
-	bar_row.add_child(back)
 	var title := UI.label(sheet_title(), 17, UI.TEXT, true)
 	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bar_row.add_child(title)
 	bar_row.add_child(UI.spacer())
+	var close_btn := UI.close_button(38)
+	close_btn.name = "SheetCloseButton"
+	close_btn.pressed.connect(close)
+	bar_row.add_child(close_btn)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
-	scroll.scroll_deadzone = 8
-	root.add_child(scroll)
+	_scroll = ScrollContainer.new()
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	_scroll.scroll_deadzone = 8
+	root.add_child(_scroll)
 
 	var margin := MarginContainer.new()
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -102,7 +107,7 @@ func _ready() -> void:
 	margin.add_theme_constant_override("margin_top", 6)
 	margin.add_theme_constant_override("margin_bottom", 30)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	scroll.add_child(margin)
+	_scroll.add_child(margin)
 
 	_body = UI.vbox(12)
 	margin.add_child(_body)
@@ -110,7 +115,7 @@ func _ready() -> void:
 	resized.connect(_layout)
 	build_body()
 
-## À surcharger : titre affiché à côté du bouton Retour.
+## À surcharger : titre affiché à gauche de la croix.
 func sheet_title() -> String:
 	return ""
 
@@ -139,13 +144,14 @@ func open() -> void:
 		_tween.kill()
 	_tween = create_tween().set_parallel(true)
 	_tween.tween_property(_backdrop, "modulate:a", 1.0, 0.26)
-	_tween.tween_property(_panel, "position:y", size.y - _panel.size.y, 0.34).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_tween.tween_property(_panel, "position:y", _open_panel_y(), 0.34).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	UI.stagger_in(_body, 6)
 
 func close() -> void:
 	if not _is_open:
 		return
 	_is_open = false
+	_pull_active = false
 	if _tween != null and _tween.is_valid():
 		_tween.kill()
 	_tween = create_tween().set_parallel(true)
@@ -155,10 +161,13 @@ func close() -> void:
 		visible = false
 		closed.emit())
 
+func _open_panel_y() -> float:
+	return size.y - _panel.size.y
+
 func _layout() -> void:
 	var h := size.y * SHEET_RATIO
 	_panel.size = Vector2(size.x, h)
-	_panel.position = Vector2(0, size.y - h) if _is_open else Vector2(0, size.y)
+	_panel.position = Vector2(0, _open_panel_y()) if _is_open else Vector2(0, size.y)
 
 func _on_backdrop_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
@@ -166,50 +175,54 @@ func _on_backdrop_input(event: InputEvent) -> void:
 	elif event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
 		close()
 
-# --- Fermeture par glissement vers le bas ----------------------------------
-func _on_grabber_input(event: InputEvent) -> void:
+# --- Fermeture par glissement vers le bas (depuis tout le panneau) ---------
+func _input(event: InputEvent) -> void:
 	if not _is_open:
 		return
-	if event is InputEventMouseButton:
-		var mb := event as InputEventMouseButton
-		if mb.button_index != MOUSE_BUTTON_LEFT:
-			return
-		if mb.pressed:
-			_begin_drag(mb.global_position.y)
+	if event is InputEventScreenTouch:
+		if (event as InputEventScreenTouch).pressed:
+			_begin_pull((event as InputEventScreenTouch).position)
 		else:
-			_end_drag()
-	elif event is InputEventScreenTouch:
-		var st := event as InputEventScreenTouch
-		if st.pressed:
-			_begin_drag(st.position.y)
-		else:
-			_end_drag()
+			_end_pull()
 	elif event is InputEventScreenDrag:
-		_apply_drag((event as InputEventScreenDrag).position.y)
-	elif event is InputEventMouseMotion and _drag_active:
-		_apply_drag((event as InputEventMouseMotion).global_position.y)
+		_update_pull((event as InputEventScreenDrag).position)
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_begin_pull(mb.global_position)
+			else:
+				_end_pull()
+	elif event is InputEventMouseMotion and _pull_active:
+		_update_pull((event as InputEventMouseMotion).global_position)
 
-func _begin_drag(y: float) -> void:
-	_drag_active = true
-	_drag_start_y = y
-	_drag_base_y = _panel.position.y
-	_drag_dy = 0.0
-	if _tween != null and _tween.is_valid():
-		_tween.kill()
-
-func _apply_drag(y: float) -> void:
-	if not _drag_active:
+func _begin_pull(pos: Vector2) -> void:
+	_pull_active = false
+	_pull_dy = 0.0
+	if _scroll == null or _scroll.scroll_vertical > 0:
 		return
-	_drag_dy = maxf(0.0, y - _drag_start_y)
-	_panel.position.y = _drag_base_y + _drag_dy
-
-func _end_drag() -> void:
-	if not _drag_active:
+	if not _panel.get_global_rect().has_point(pos):
 		return
-	_drag_active = false
-	if _drag_dy > 90.0:
+	_pull_active = true
+	_pull_start = pos
+
+func _update_pull(pos: Vector2) -> void:
+	if not _pull_active:
+		return
+	var dy := pos.y - _pull_start.y
+	if dy < PULL_START:
+		return
+	_pull_dy = dy
+	_panel.position.y = _open_panel_y() + dy
+	get_viewport().set_input_as_handled()
+
+func _end_pull() -> void:
+	if not _pull_active:
+		return
+	_pull_active = false
+	if _pull_dy > PULL_THRESHOLD:
 		close()
 	else:
 		var t := create_tween()
-		t.tween_property(_panel, "position:y", _drag_base_y, 0.18).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_drag_dy = 0.0
+		t.tween_property(_panel, "position:y", _open_panel_y(), 0.18).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_pull_dy = 0.0

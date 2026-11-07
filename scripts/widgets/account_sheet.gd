@@ -1,7 +1,39 @@
 class_name AccountSheet
 extends SheetBase
-## FaillesCheck — gestion du compte (Supabase Auth).
+## FaillesCheck — gestion du compte (Supabase Auth), affiché en plein écran.
 ## Aucun mot de passe n'est conservé : la session reste en mémoire.
+
+## Plein écran : le panneau couvre toute la surface (pas de feuille basse).
+func _ready() -> void:
+	super()
+	if _backdrop != null:
+		_backdrop.visible = false
+		_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := _panel.get_theme_stylebox("panel")
+	if sb is StyleBoxFlat:
+		var f := sb as StyleBoxFlat
+		f.corner_radius_top_left = 0
+		f.corner_radius_top_right = 0
+		f.shadow_size = 0
+	var grab := _panel.find_child("SheetGrabber", true, false)
+	if grab is MarginContainer:
+		var gm := grab as MarginContainer
+		gm.add_theme_constant_override("margin_top", 26)
+		gm.add_theme_constant_override("margin_bottom", 10)
+		for c in gm.get_children():
+			if c is Control:
+				(c as Control).visible = false
+
+func _open_panel_y() -> float:
+	return 0.0
+
+func _layout() -> void:
+	_panel.size = size
+	_panel.position = Vector2.ZERO if _is_open else Vector2(0, size.y)
+
+## Pas de fermeture par glissement : c'est un écran plein, on utilise la croix.
+func _begin_pull(_pos: Vector2) -> void:
+	pass
 
 var _mode := "signin"
 var _error := ""
@@ -46,6 +78,9 @@ func _render_form() -> void:
 	var mail := UI.line_edit("Adresse e-mail")
 	mail.name = "AccountEmail"
 	mail.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_EMAIL_ADDRESS
+	# Dernier compte utilisé : pré-rempli (jamais le mot de passe).
+	if DataStore.last_email() != "":
+		mail.text = DataStore.last_email()
 	v.add_child(mail)
 	if _mode != "recover":
 		var pwd := UI.line_edit("Mot de passe")

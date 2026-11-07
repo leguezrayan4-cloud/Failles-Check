@@ -52,7 +52,6 @@ func show_software(item: Dictionary) -> void:
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	left.add_child(UI.label("Vulnérabilités", 13, UI.TEXT_2))
-	left.add_child(UI.label("Données réelles (NVD)", 11, UI.TEXT_3))
 	row.add_child(left)
 	var count := UI.label(str(vulns.size()), 30, UI.DANGER if vulns.size() > 0 else UI.TEXT_2, true)
 	count.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -78,6 +77,24 @@ func show_software(item: Dictionary) -> void:
 	chart_card.add_child(cv)
 	_body.add_child(chart_card)
 
+	# --- Note personnelle ---
+	_body.add_child(UI.section_title("Note personnelle"))
+	var note := TextEdit.new()
+	note.name = "SoftwareNote"
+	note.placeholder_text = "Ex. : version utilisée en production, correctif à appliquer…"
+	note.custom_minimum_size = Vector2(0, 74)
+	note.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	note.text = DataStore.note_for(id)
+	note.add_theme_stylebox_override("normal", _note_style())
+	note.add_theme_stylebox_override("focus", _note_style())
+	note.add_theme_font_size_override("font_size", 13)
+	_body.add_child(note)
+	var save_note := UI.ghost_button("Enregistrer la note", UI.ACCENT)
+	save_note.name = "SoftwareSaveNote"
+	save_note.pressed.connect(func() -> void:
+		DataStore.set_note(id, note.text))
+	_body.add_child(save_note)
+
 	# --- Actions ---
 	var actions := UI.hbox(10)
 	var fav_on := DataStore.is_favorite(id)
@@ -97,3 +114,12 @@ func show_software(item: Dictionary) -> void:
 	_body.add_child(actions)
 
 	open()
+
+func _note_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1)
+	sb.set_corner_radius_all(12)
+	sb.border_color = UI.BORDER
+	sb.set_border_width_all(1)
+	sb.set_content_margin_all(10)
+	return sb

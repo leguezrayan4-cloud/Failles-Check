@@ -3,10 +3,10 @@ extends AppPage
 ## Onglet Accueil — tableau de bord.
 
 func page_title() -> String:
-	return "Accueil"
+	return Loc.t("home_title")
 
 func page_subtitle() -> String:
-	return "Vue d'ensemble"
+	return Loc.t("home_sub")
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -148,8 +148,8 @@ func _trends() -> Control:
 	v.add_child(head)
 	v.add_child(UI.label("%d faille(s) publiée(s) ce mois-ci · maximum %d sur un mois" % [crit, max_v], 12, UI.TEXT_2, false, true))
 
-	var chart := SparkChart.new()
-	chart.custom_minimum_size = Vector2(0, 96)
+	var chart := TrendChart.new()
+	chart.custom_minimum_size = Vector2(0, 112)
 	chart.set_data(labels, values, UI.ACCENT)
 	v.add_child(chart)
 	card.add_child(v)

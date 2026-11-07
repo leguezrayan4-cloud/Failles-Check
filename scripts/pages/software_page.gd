@@ -16,10 +16,10 @@ var _list: VBoxContainer
 var _debounce: Timer
 
 func page_title() -> String:
-	return "Mes logiciels"
+	return Loc.t("software_title")
 
 func page_subtitle() -> String:
-	return "Logiciels suivis"
+	return Loc.t("software_sub")
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -166,7 +166,7 @@ func _suggestion_card(item: Dictionary) -> TapCard:
 		parts.append("v" + version)
 	var sub := " · ".join(parts)
 	if sub != "":
-		mid.add_child(UI.label(sub, 12, UI.TEXT_2))
+		mid.add_child(UI.label(sub, 12, UI.TEXT_2, false, true))
 	row.add_child(mid)
 	if str(item.get("source", "")) == "NVD":
 		row.add_child(UI.badge("NVD", UI.ACCENT))
@@ -251,7 +251,7 @@ func _software_card(s: Dictionary) -> Control:
 		parts.append(str(s.get("editor", "")))
 	if str(s.get("version", "")) != "":
 		parts.append("v" + str(s.get("version", "")))
-	v.add_child(UI.label(" · ".join(parts) if not parts.is_empty() else "—", 12, UI.TEXT_2))
+	v.add_child(UI.label(" · ".join(parts) if not parts.is_empty() else "—", 12, UI.TEXT_2, false, true))
 	v.add_child(UI.label("%d vulnérabilité(s)" % vulns.size(), 11, UI.TEXT_3))
 	inner.add_child(v)
 	UI.overlay(details, inner, 0)

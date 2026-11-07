@@ -3,10 +3,10 @@ extends AppPage
 ## Onglet Paramètres — compte, apparence, notifications, cache.
 
 func page_title() -> String:
-	return "Paramètres"
+	return Loc.t("settings_title")
 
 func page_subtitle() -> String:
-	return "Compte et préférences"
+	return Loc.t("settings_sub")
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -48,6 +48,20 @@ func refresh() -> void:
 		"Fonds opaques et contraste renforcé.",
 		DataStore.is_reduce_transparency(), "TransparencySwitch", _on_transparency))
 
+	# --- Langue ---
+	content.add_child(UI.section_title("Langue"))
+	var lang_row := UI.hbox(8)
+	var fr := UI.chip("Français", DataStore.language() == "fr")
+	fr.name = "LangFr"
+	fr.tapped.connect(func() -> void: _set_lang("fr"))
+	lang_row.add_child(fr)
+	var en := UI.chip("English", DataStore.language() == "en")
+	en.name = "LangEn"
+	en.tapped.connect(func() -> void: _set_lang("en"))
+	lang_row.add_child(en)
+	content.add_child(lang_row)
+	content.add_child(UI.label(Loc.t("language_desc"), 12, UI.TEXT_3, false, true))
+
 	# --- Notifications ---
 	content.add_child(UI.section_title("Notifications"))
 	var notif_desc := "Alertes de failles critiques sur votre téléphone."
@@ -56,6 +70,10 @@ func refresh() -> void:
 	content.add_child(_switch_card("Alertes de vulnérabilités",
 		notif_desc,
 		DataStore.notifications_enabled(), "NotificationsSwitch", _on_notifications))
+
+	content.add_child(_switch_card("Notification de test (toutes les minutes)",
+		"Vérifie que les notifications arrivent bien sur votre téléphone.",
+		bool(DataStore.settings.get("test_notifications", true)), "TestNotifSwitch", _on_test_notifications))
 
 	# --- Cache (le bouton vide réellement les données mises en cache) ---
 	var clear := UI.ghost_button("Vider le cache", UI.TEXT_2)
@@ -76,8 +94,12 @@ func _switch_card(title: String, desc: String, on: bool, node_name: String, hand
 	var v := UI.vbox(3)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	v.add_child(UI.label(title, 15, UI.TEXT, true))
-	v.add_child(UI.label(desc, 12, UI.TEXT_2, false, true))
+	var title_label := UI.label(title, 15, UI.TEXT, true, true)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(title_label)
+	var desc_label := UI.label(desc, 12, UI.TEXT_2, false, true)
+	desc_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(desc_label)
 	row.add_child(v)
 	var sw := UI.switch_button(on)
 	sw.name = node_name
@@ -93,7 +115,9 @@ func _on_account() -> void:
 		main.open_account_sheet()
 
 func _on_sync() -> void:
+	DataStore.start_busy("Synchronisation…")
 	var res: Dictionary = await DataStore.sync_now()
+	DataStore.end_busy()
 	if bool(res.get("ok", false)):
 		DataStore.toast.emit("Synchronisé")
 	else:
@@ -101,6 +125,15 @@ func _on_sync() -> void:
 
 func _on_transparency(value: bool) -> void:
 	DataStore.set_reduce_transparency(value)
+
+func _set_lang(code: String) -> void:
+	DataStore.set_language(code)
+	refresh()
+
+func _on_test_notifications(value: bool) -> void:
+	DataStore.settings["test_notifications"] = value
+	DataStore.save_data()
+	DataStore.toast.emit("Notification de test activée" if value else "Notification de test désactivée")
 
 func _on_notifications(value: bool) -> void:
 	DataStore.set_notifications(value)

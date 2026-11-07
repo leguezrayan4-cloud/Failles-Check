@@ -22,10 +22,10 @@ var _online_button: Button
 var _filter_button: Button
 
 func page_title() -> String:
-	return "Recherche"
+	return Loc.t("search_title")
 
 func page_subtitle() -> String:
-	return "Catalogue de failles"
+	return Loc.t("search_sub")
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)

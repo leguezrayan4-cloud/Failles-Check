@@ -6,7 +6,7 @@ func page_title() -> String:
 	return "Accueil"
 
 func page_subtitle() -> String:
-	return "Vue d'ensemble de vos failles"
+	return "Vue d'ensemble"
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -19,8 +19,9 @@ func refresh() -> void:
 	var has_data := not DataStore.vulnerabilities.is_empty() or not DataStore.software.is_empty()
 	if not has_data:
 		content.add_child(UI.empty_state(
-			"Aucune donnée pour le moment",
-			"Activez les données de démonstration dans Réglages, ou activez la source en ligne (NVD) puis lancez une recherche."))
+			"Aucune donnée",
+			"Activez une source dans Réglages."))
+		UI.stagger_in(content, 6)
 		return
 
 	content.add_child(_stats())
@@ -40,6 +41,7 @@ func refresh() -> void:
 		content.add_child(UI.section_title("Vos logiciels suivis"))
 		for s in DataStore.software.slice(0, 5):
 			content.add_child(_software_row(s))
+	UI.stagger_in(content, 6)
 
 func _hero() -> PanelContainer:
 	var p := UI.card(16)
@@ -98,8 +100,8 @@ func _software_row(s: Dictionary) -> PanelContainer:
 	p.add_child(row)
 	return p
 
+## Ouvre le détail par-dessus l'écran courant (on reste dans le contexte).
 func _open(id: String) -> void:
-	DataStore.select(id)
 	var main := get_tree().current_scene
-	if main != null and main.has_method("open_detail"):
-		main.open_detail()
+	if main != null and main.has_method("open_detail_sheet"):
+		main.open_detail_sheet(id)

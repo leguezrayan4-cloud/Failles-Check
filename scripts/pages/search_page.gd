@@ -35,7 +35,8 @@ func refresh() -> void:
 
 	if _error != "":
 		content.add_child(UI.label(_error, 12, UI.DANGER, false, true))
-	if _status != "":
+	# Le message de récupération distante n'a plus de sens en mode démonstration.
+	if _status != "" and not DataStore.is_demo():
 		content.add_child(UI.label(_status, 12, UI.TEXT_2, false, true))
 
 	var chips := HFlowContainer.new()
@@ -45,7 +46,7 @@ func refresh() -> void:
 	var defs := [["all", "Tous"], ["critique", "Critique"], ["elevee", "Élevée"], ["moyenne", "Moyenne"], ["faible", "Faible"]]
 	for d in defs:
 		var c := UI.chip(str(d[1]), _filter == str(d[0]))
-		c.pressed.connect(_set_filter.bind(str(d[0])))
+		c.tapped.connect(_set_filter.bind(str(d[0])))
 		chips.add_child(c)
 	content.add_child(chips)
 
@@ -59,24 +60,24 @@ func refresh() -> void:
 ## Bloc de recherche en ligne : bouton + aide contextuelle.
 func _build_online_row() -> Control:
 	if DataStore.is_demo():
-		return UI.label("Mode démonstration actif — données fictives (DÉMO · FICTIF). Désactivez-le dans Réglages pour interroger le NVD.",
-			12, UI.TEXT_2, false, true)
+		return UI.label("Mode démonstration (DÉMO · FICTIF)", 12, UI.TEXT_2, false, true)
 
 	var box := UI.vbox(6)
 	_online_button = UI.ghost_icon_button(UI.ICON_GLOBE, "Rechercher en ligne (NVD)", UI.ACCENT)
 	_online_button.name = "OnlineButton"
-	_online_button.disabled = DataStore.is_loading()
+	# Bouton désactivé (état grisé) si la source en ligne est coupée ou occupée.
+	_online_button.disabled = DataStore.is_loading() or not DataStore.is_online()
 	if DataStore.is_loading():
 		_online_button.text = "Recherche en ligne…"
 	_online_button.pressed.connect(_on_online)
 	box.add_child(_online_button)
 	if not DataStore.is_online():
-		box.add_child(UI.label("Source en ligne désactivée : activez-la dans Réglages.", 12, UI.TEXT_2, false, true))
+		box.add_child(UI.label("Source en ligne désactivée", 12, UI.TEXT_2, false, true))
 	return box
 
 func _on_online() -> void:
 	_error = ""
-	_status = "Interrogation de la source NVD…"
+	_status = "Interrogation du NVD…"
 	DataStore.search_online(_query)
 	refresh()
 
@@ -111,9 +112,8 @@ func _apply() -> void:
 		if _count_label != null:
 			_count_label.text = ""
 		_results_box.add_child(UI.empty_state(
-			"Aucune donnée à rechercher",
-			"Activez les données de démonstration dans Réglages pour un catalogue fictif (DÉMO · FICTIF), ou activez la source en ligne (NVD) puis lancez une recherche.",
-			UI.ICON_SEARCH))
+			"Aucune donnée",
+			"Activez une source dans Réglages.", UI.ICON_SEARCH))
 		return
 
 	var list := _filtered()
@@ -121,7 +121,7 @@ func _apply() -> void:
 
 	if list.is_empty():
 		_results_box.add_child(UI.empty_state("Aucun résultat",
-			"Essayez un autre filtre de gravité ou un autre terme de recherche.", UI.ICON_SEARCH))
+			"Modifiez le filtre ou le terme recherché.", UI.ICON_SEARCH))
 		return
 
 	if DataStore.is_demo():
@@ -131,6 +131,7 @@ func _apply() -> void:
 
 	for v in list:
 		_results_box.add_child(UI.vuln_card(v, _open.bind(str(v.get("id", "")))))
+	UI.stagger_in(_results_box, 6)
 
 func _filtered() -> Array:
 	var q := _query.strip_edges().to_lower()
@@ -145,8 +146,8 @@ func _filtered() -> Array:
 		out.append(v)
 	return out
 
+## Ouvre le détail par-dessus l'écran courant (on reste dans le contexte).
 func _open(id: String) -> void:
-	DataStore.select(id)
 	var main := get_tree().current_scene
-	if main != null and main.has_method("open_detail"):
-		main.open_detail()
+	if main != null and main.has_method("open_detail_sheet"):
+		main.open_detail_sheet(id)

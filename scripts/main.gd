@@ -1,6 +1,7 @@
 extends Control
-## FaillesCheck — contrôleur de l'unique scène principale.
-## Écran de chargement, fond plein écran, barre d'onglets (5) et transitions.
+## FaillesCheck — contrôleur de l'unique scène principale (res://Main.tscn).
+## Chargement réel et asynchrone, 4 onglets, panneau de détail animé,
+## défilement tactile, toasts.
 
 const NAV_H := 72
 
@@ -8,12 +9,18 @@ var _pages: Array[Control] = []
 var _nav_icons: Array[TextureRect] = []
 var _nav_labels: Array[Label] = []
 var _current: int = -1
-var _return_tab: int = 0
 
 var _pages_layer: Control
 var _nav_layer: PanelContainer
-var _splash: Control
-var _splash_bar: ProgressBar
+var _sheet: DetailSheet
+var _loader: AppLoader
+var _loading_layer: Control
+var _loading_bar: ProgressBar
+var _loading_status: Label
+var _loading_percent: Label
+var _loading_error: Label
+var _loading_actions: HBoxContainer
+var _loading_spinner: Spinner
 var _toast_panel: PanelContainer
 var _toast: Label
 var _toast_tween: Tween
@@ -25,36 +32,39 @@ func _ready() -> void:
 	_defs = [
 		{"title": "Accueil", "short": "Accueil", "icon": UI.ICON_HOME, "page": HomePage},
 		{"title": "Recherche", "short": "Recherche", "icon": UI.ICON_SEARCH, "page": SearchPage},
-		{"title": "Fiche", "short": "Fiche", "icon": UI.ICON_FICHE, "page": DetailPage},
 		{"title": "Mes logiciels", "short": "Logiciels", "icon": UI.ICON_APPS, "page": SoftwarePage},
 		{"title": "Réglages", "short": "Réglages", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
 	]
 	_build_background()
 	_build_pages()
 	_build_nav()
-	_build_splash()
+	_build_sheet()
 	_build_toast()
+	_build_loading()
 	DataStore.toast.connect(_show_toast)
 	_switch_to(0, true)
-	_run_splash()
+	_start_loading()
 
 # --- Fond plein écran ------------------------------------------------------
 func _build_background() -> void:
 	var bg := TextureRect.new()
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.texture = _gradient_texture(UI.BG_TOP, UI.BG_BOTTOM)
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	add_child(bg)
+
+func _gradient_texture(top: Color, bottom: Color) -> GradientTexture2D:
 	var grad := Gradient.new()
-	grad.set_color(0, UI.BG_TOP)
-	grad.set_color(1, UI.BG_BOTTOM)
+	grad.set_color(0, top)
+	grad.set_color(1, bottom)
 	var tex := GradientTexture2D.new()
 	tex.gradient = grad
 	tex.fill_from = Vector2(0.5, 0.0)
 	tex.fill_to = Vector2(0.5, 1.0)
 	tex.width = 360
 	tex.height = 640
-	bg.texture = tex
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	add_child(bg)
+	return tex
 
 # --- Pages -----------------------------------------------------------------
 func _build_pages() -> void:
@@ -81,7 +91,7 @@ func _build_nav() -> void:
 	_nav_layer.offset_left = 0.0
 	_nav_layer.offset_right = 0.0
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1, 1, 1, 0.95)
+	sb.bg_color = Color(1, 1, 1, 0.96)
 	sb.border_color = UI.BORDER
 	sb.border_width_top = 1
 	sb.content_margin_left = 6
@@ -127,6 +137,8 @@ func _make_nav_item(title: String, icon_svg: String, index: int) -> Button:
 	return b
 
 func _on_nav_pressed(index: int) -> void:
+	if _sheet != null and _sheet.is_open():
+		_sheet.close()
 	var dir := 1 if index >= _current else -1
 	_switch_to(index, false, dir)
 
@@ -137,18 +149,24 @@ func _update_nav() -> void:
 		_nav_icons[i].modulate = c
 		_nav_labels[i].add_theme_color_override("font_color", c)
 
-## Appelé par les pages pour ouvrir la fiche d'une faille.
-func open_detail() -> void:
-	if _current != 2 and _current >= 0:
-		_return_tab = _current
-	_switch_to(2, false, 1)
+# --- Détail ----------------------------------------------------------------
+func _build_sheet() -> void:
+	_sheet = DetailSheet.new()
+	_sheet.name = "DetailSheet"
+	add_child(_sheet)
 
-## Retour à l'écran précédent (bouton Retour de la fiche), avec transition animée.
+## Ouverture du détail par-dessus l'écran courant (Accueil ou Recherche).
+func open_detail_sheet(id: String) -> void:
+	var v := DataStore.get_vulnerability(id)
+	if v.is_empty():
+		return
+	DataStore.select(id)
+	_sheet.show_detail(v)
+
+## Conservé pour compatibilité : ferme le panneau de détail.
 func go_back() -> void:
-	var target := _return_tab
-	if target == _current or target < 0 or target >= _pages.size():
-		target = 0
-	_switch_to(target, false, -1)
+	if _sheet != null and _sheet.is_open():
+		_sheet.close()
 
 # --- Transitions -----------------------------------------------------------
 ## dir = 1 : avant (entre par la droite) ; dir = -1 : retour (entre par la gauche).
@@ -191,40 +209,32 @@ func _hide_page(page: Control) -> void:
 	page.modulate = Color(1, 1, 1, 1)
 	page.z_index = 0
 
-# --- Écran de chargement ---------------------------------------------------
-func _build_splash() -> void:
-	_splash = Control.new()
-	_splash.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_splash.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(_splash)
+# --- Écran de chargement (réel) --------------------------------------------
+func _build_loading() -> void:
+	_loading_layer = Control.new()
+	_loading_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_loading_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_loading_layer)
 
 	var bg := TextureRect.new()
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var grad := Gradient.new()
-	grad.set_color(0, Color(0.953, 0.969, 0.996))
-	grad.set_color(1, Color(0.898, 0.925, 0.984))
-	var tex := GradientTexture2D.new()
-	tex.gradient = grad
-	tex.fill_from = Vector2(0.5, 0.0)
-	tex.fill_to = Vector2(0.5, 1.0)
-	tex.width = 360
-	tex.height = 640
-	bg.texture = tex
+	bg.texture = _gradient_texture(Color(0.953, 0.969, 0.996), Color(0.898, 0.925, 0.984))
 	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	_splash.add_child(bg)
+	_loading_layer.add_child(bg)
 
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_splash.add_child(center)
+	_loading_layer.add_child(center)
 
-	var v := UI.vbox(12)
+	var v := UI.vbox(10)
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.custom_minimum_size = Vector2(300, 0)
 	center.add_child(v)
 
 	var logo := TextureRect.new()
 	logo.texture = preload("res://Logo.png")
-	logo.custom_minimum_size = Vector2(132, 132)
+	logo.custom_minimum_size = Vector2(120, 120)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -232,50 +242,131 @@ func _build_splash() -> void:
 
 	var t := UI.label("FaillesCheck", 30, UI.ACCENT, true)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	t.custom_minimum_size = Vector2(240, 0)
 	v.add_child(t)
-
 	var sub := UI.label("Contrôle de vulnérabilités", 14, UI.TEXT_2)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.custom_minimum_size = Vector2(240, 0)
 	v.add_child(sub)
 
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 8)
+	gap.custom_minimum_size = Vector2(0, 10)
 	v.add_child(gap)
 
-	_splash_bar = ProgressBar.new()
-	_splash_bar.custom_minimum_size = Vector2(180, 6)
-	_splash_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_splash_bar.show_percentage = false
-	_splash_bar.max_value = 100.0
-	_splash_bar.value = 0.0
-	_splash_bar.add_theme_stylebox_override("background", UI.stylebox(Color(0.839, 0.871, 0.933), 3, 0, Color(0, 0, 0, 0), 0))
-	_splash_bar.add_theme_stylebox_override("fill", UI.stylebox(UI.ACCENT, 3, 0, Color(0, 0, 0, 0), 0))
-	v.add_child(_splash_bar)
+	var status_row := UI.hbox(8)
+	status_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_loading_spinner = Spinner.new(18, UI.ACCENT)
+	status_row.add_child(_loading_spinner)
+	_loading_status = UI.label("Préparation…", 13, UI.TEXT_2, false, true)
+	_loading_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_row.add_child(_loading_status)
+	v.add_child(status_row)
 
-	var load_label := UI.label("Chargement…", 12, UI.TEXT_3)
-	load_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	load_label.custom_minimum_size = Vector2(240, 0)
-	v.add_child(load_label)
+	_loading_bar = ProgressBar.new()
+	_loading_bar.custom_minimum_size = Vector2(0, 6)
+	_loading_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_loading_bar.show_percentage = false
+	_loading_bar.max_value = 100.0
+	_loading_bar.value = 0.0
+	_loading_bar.add_theme_stylebox_override("background", UI.stylebox(Color(0.839, 0.871, 0.933), 3, 0, Color(0, 0, 0, 0), 0))
+	_loading_bar.add_theme_stylebox_override("fill", UI.stylebox(UI.ACCENT, 3, 0, Color(0, 0, 0, 0), 0))
+	v.add_child(_loading_bar)
 
-func _run_splash() -> void:
+	_loading_percent = UI.label("0 %", 12, UI.TEXT_3)
+	_loading_percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_loading_percent)
+
+	_loading_error = UI.label("", 12, UI.DANGER, true, true)
+	_loading_error.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_error.visible = false
+	v.add_child(_loading_error)
+
+	_loading_actions = UI.hbox(10)
+	_loading_actions.visible = false
+	var retry := UI.primary_button("Réessayer")
+	retry.name = "RetryButton"
+	retry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	retry.pressed.connect(_on_retry)
+	_loading_actions.add_child(retry)
+	var offline := UI.ghost_button("Continuer hors ligne", UI.TEXT_2)
+	offline.name = "OfflineButton"
+	offline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	offline.pressed.connect(_on_continue_offline)
+	_loading_actions.add_child(offline)
+	v.add_child(_loading_actions)
+
+	var note := UI.label("Données publiques : NVD (NIST) · cache local · DÉMO · FICTIF",
+		11, UI.TEXT_3, false, true)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(note)
+
+func _start_loading() -> void:
 	_pages_layer.modulate.a = 0.0
 	_nav_layer.modulate.a = 0.0
-	var t := create_tween()
-	t.tween_property(_splash_bar, "value", 100.0, 1.3).set_trans(Tween.TRANS_SINE)
-	t.tween_interval(0.15)
-	t.tween_callback(_end_splash)
+	if _loader == null:
+		_loader = AppLoader.new()
+		_loader.name = "AppLoader"
+		add_child(_loader)
+		_loader.progress_changed.connect(_on_progress)
+		_loader.failed.connect(_on_load_failed)
+		_loader.completed.connect(_on_load_completed)
+	_loading_error.visible = false
+	_loading_actions.visible = false
+	_loading_spinner.visible = true
+	_loading_bar.value = 0.0
+	_loading_percent.text = "0 %"
+	_loader.run()
 
-func _end_splash() -> void:
+func _on_progress(ratio: float, label: String) -> void:
+	_loading_bar.value = ratio * 100.0
+	_loading_percent.text = "%d %%" % int(round(ratio * 100.0))
+	_loading_status.text = label
+
+func _on_load_failed(message: String) -> void:
+	_loading_spinner.visible = false
+	_loading_status.text = "Chargement incomplet"
+	_loading_error.text = message
+	_loading_error.add_theme_color_override("font_color", UI.DANGER)
+	_loading_error.visible = true
+	_loading_actions.visible = true
+
+func _on_load_completed(with_warnings: bool, summary: String) -> void:
+	if with_warnings:
+		_loading_status.text = "Chargé (mode dégradé)"
+		_loading_error.text = summary
+		_loading_error.add_theme_color_override("font_color", UI.TEXT_2)
+		_loading_error.visible = true
+	else:
+		_loading_status.text = "Terminé"
+	_loading_spinner.visible = false
+	await get_tree().create_timer(0.45).timeout
+	_hide_loading()
+
+func _hide_loading() -> void:
+	# L'interface est déjà prête : on ne capture plus aucun appui pendant le fondu.
+	_loading_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var t := create_tween().set_parallel(true)
-	t.tween_property(_splash, "modulate:a", 0.0, 0.4)
+	t.tween_property(_loading_layer, "modulate:a", 0.0, 0.4)
 	t.tween_property(_pages_layer, "modulate:a", 1.0, 0.45)
 	t.tween_property(_nav_layer, "modulate:a", 1.0, 0.45)
-	t.chain().tween_callback(func():
-		_splash.visible = false
-		_splash.queue_free()
+	t.chain().tween_callback(func() -> void:
+		_loading_layer.visible = false
+		_loading_layer.queue_free()
 		_pages_layer.modulate = Color(1, 1, 1, 1))
+
+func _on_retry() -> void:
+	_set_loading_actions_visible(false)
+	_loading_error.visible = false
+	_loading_spinner.visible = true
+	_loading_status.text = "Nouvelle tentative…"
+	_loading_bar.value = 0.0
+	_loading_percent.text = "0 %"
+	_loader.run()
+
+func _on_continue_offline() -> void:
+	_set_loading_actions_visible(false)
+	_loader.continue_offline()
+
+func _set_loading_actions_visible(v: bool) -> void:
+	_loading_actions.visible = v
 
 # --- Toast -----------------------------------------------------------------
 func _build_toast() -> void:
@@ -289,7 +380,7 @@ func _build_toast() -> void:
 	_toast_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.063, 0.094, 0.157, 0.93)
+	sb.bg_color = Color(0.063, 0.094, 0.157, 0.94)
 	sb.set_corner_radius_all(20)
 	sb.content_margin_left = 16
 	sb.content_margin_right = 16
@@ -303,10 +394,12 @@ func _build_toast() -> void:
 	add_child(_toast_panel)
 
 func _show_toast(message: String) -> void:
+	if _toast == null:
+		return
 	_toast.text = message
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()
 	_toast_tween = create_tween()
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 1.0, 0.18)
-	_toast_tween.tween_interval(1.4)
+	_toast_tween.tween_interval(1.6)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)

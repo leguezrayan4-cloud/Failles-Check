@@ -14,6 +14,15 @@ const TEXT_3 := Color(0.612, 0.639, 0.686)
 const ACCENT := Color(0.176, 0.490, 0.965)
 const ACCENT_2 := Color(0.541, 0.298, 0.941)
 const DANGER := Color(0.898, 0.282, 0.302)
+const BORDER_STRONG := Color(0.784, 0.808, 0.851)
+
+## Suréchantillonnage des icônes vectorielles : dessinées en 3× puis
+## affichées à la taille logique, elles restent nettes sur un écran 3× (iPhone).
+const ICON_SS := 3.0
+
+## Accessibilité (inspiré d'iOS) : transparence réduite → fonds plus opaques
+## et contrastes renforcés. Piloté par DataStore.set_reduce_transparency().
+static var transparency_reduced := false
 
 static var FONT_NAMES := PackedStringArray([
 	"SF Pro Text", "SF Pro Display", "Segoe UI", "Helvetica Neue",
@@ -26,11 +35,13 @@ const ICON_SEARCH := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24
 const ICON_FICHE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" fill-rule=\"evenodd\" d=\"M6 2h7l5 5v15H6V2zM9 11.6h6v1.7H9zM9 15.4h6v1.7H9zM9 7.8h3v1.7H9z\"/></svg>"
 const ICON_APPS := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"#fff\"><rect x=\"3\" y=\"3\" width=\"8\" height=\"8\" rx=\"2.2\"/><rect x=\"13\" y=\"3\" width=\"8\" height=\"8\" rx=\"2.2\"/><rect x=\"3\" y=\"13\" width=\"8\" height=\"8\" rx=\"2.2\"/><rect x=\"13\" y=\"13\" width=\"8\" height=\"8\" rx=\"2.2\"/></g></svg>"
 const ICON_SETTINGS := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M3 7h18M3 12h18M3 17h18\"/></g><g fill=\"#fff\"><circle cx=\"8\" cy=\"7\" r=\"2.7\"/><circle cx=\"16\" cy=\"12\" r=\"2.7\"/><circle cx=\"10.5\" cy=\"17\" r=\"2.7\"/></g></svg>"
-const ICON_TRASH := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" d=\"M9 2.4h6v2.1H9zM4.4 6.2h15.2v2.1h-1.5l-1 13.1a1.6 1.6 0 0 1-1.6 1.5H8.5a1.6 1.6 0 0 1-1.6-1.5l-1-13.1H4.4z\"/></svg>"
+const ICON_TRASH := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 6.5h16\"/><path d=\"M9.4 6.5V4.3h5.2v2.2\"/><path d=\"M6.5 6.5l.85 12.3a1.75 1.75 0 0 0 1.75 1.65h5.8a1.75 1.75 0 0 0 1.75-1.65l.85-12.3\"/><path d=\"M10.4 10.3v6.9M13.6 10.3v6.9\"/></g></svg>"
 const ICON_PLUS := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2.8\" stroke-linecap=\"round\"><path d=\"M12 4.5v15M4.5 12h15\"/></g></svg>"
 const ICON_SHIELD := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" d=\"M12 2 4 5v6.5c0 4.7 3.2 9.1 8 10.5 4.8-1.4 8-5.8 8-10.5V5z\"/></svg>"
 const ICON_BACK := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M15.5 4 7.5 12l8 8\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
 const ICON_GLOBE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\"/><path d=\"M3 12h18M12 3c3.2 3.2 3.2 14.8 0 18M12 3c-3.2 3.2-3.2 14.8 0 18\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.6\"/></svg>"
+const ICON_SPINNER := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M12 2.6a9.4 9.4 0 1 1-6.65 2.72\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2.8\" stroke-linecap=\"round\"/></svg>"
+const ICON_SOFTWARE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2.4\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\"/><path d=\"M8 20h8\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>"
 
 static var _font_reg: SystemFont
 static var _font_bold: SystemFont
@@ -88,22 +99,32 @@ static func stylebox(color: Color, radius: int = 14, bw: int = 0, bc: Color = Co
 
 static func card_style(radius: int = 18, margin: int = 16, bg: Color = CARD) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
+	sb.bg_color = bg if not transparency_reduced else Color(1, 1, 1, 1)
 	sb.set_corner_radius_all(radius)
 	sb.set_content_margin_all(margin)
-	sb.border_color = BORDER
+	sb.border_color = BORDER_STRONG if transparency_reduced else BORDER
 	sb.set_border_width_all(1)
-	sb.shadow_color = Color(0.06, 0.09, 0.16, 0.08)
-	sb.shadow_size = 8
-	sb.shadow_offset = Vector2(0, 3)
+	sb.shadow_color = Color(0.06, 0.09, 0.16, 0.10)
+	sb.shadow_size = 0 if transparency_reduced else 8
+	sb.shadow_offset = Vector2(0, 0) if transparency_reduced else Vector2(0, 3)
 	return sb
 
 # --- Widgets ---------------------------------------------------------------
+## Contraste renforcé quand la transparence réduite est active.
+static func _readable(c: Color) -> Color:
+	if not transparency_reduced:
+		return c
+	if c.is_equal_approx(TEXT_3):
+		return TEXT_2.darkened(0.14)
+	if c.is_equal_approx(TEXT_2):
+		return TEXT.darkened(0.04)
+	return c
+
 static func label(text: String, size: int = 15, color: Color = TEXT, bold: bool = false, should_wrap: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_color", _readable(color))
 	l.add_theme_font_override("font", font_bold() if bold else font_reg())
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if should_wrap else TextServer.AUTOWRAP_OFF
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -151,29 +172,38 @@ static func icon(svg: String, size: int = 24, color: Color = TEXT_2) -> TextureR
 	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return tex_rect
 
+## Rastérise le SVG en 3× la taille logique, puis force la taille d'affichage
+## logique : le rendu reste net sur écran haute densité (iPhone 3×).
 static func svg_texture(svg: String, size: int = 24) -> ImageTexture:
+	var px := int(round(float(size) * ICON_SS))
 	var img := Image.new()
-	var err := img.load_svg_from_string(svg, float(size) / 24.0)
+	var err := img.load_svg_from_string(svg, float(px) / 24.0)
 	if err != OK:
 		push_error("FaillesCheck: échec chargement SVG (%s)" % err)
 		return null
-	return ImageTexture.create_from_image(img)
+	var tex := ImageTexture.create_from_image(img)
+	tex.set_size_override(Vector2i(size, size))
+	return tex
 
 static func card(padding: int = 16) -> PanelContainer:
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", card_style(18, padding))
+	# Transparent au glissement : le geste doit atteindre le ScrollContainer.
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	return p
 
 static func vbox(sep: int = 8) -> VBoxContainer:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", sep)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
 	return v
 
 static func hbox(sep: int = 8) -> HBoxContainer:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", sep)
 	h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.mouse_filter = Control.MOUSE_FILTER_PASS
 	return h
 
 static func spacer() -> Control:
@@ -203,9 +233,12 @@ static func primary_button(text: String, color: Color = ACCENT) -> Button:
 	b.add_theme_color_override("font_pressed_color", Color.WHITE)
 	b.add_theme_color_override("font_focus_color", Color.WHITE)
 	b.custom_minimum_size = Vector2(0, 46)
-	b.add_theme_stylebox_override("normal", stylebox(color, 13, 0, Color(0, 0, 0, 0), 10))
-	b.add_theme_stylebox_override("hover", stylebox(color.lightened(0.08), 13, 0, Color(0, 0, 0, 0), 10))
-	b.add_theme_stylebox_override("pressed", stylebox(color.darkened(0.12), 13, 0, Color(0, 0, 0, 0), 10))
+	var edge := color.darkened(0.22)
+	b.add_theme_stylebox_override("normal", stylebox(color, 13, 1, edge, 10))
+	b.add_theme_stylebox_override("hover", stylebox(color.lightened(0.08), 13, 1, edge, 10))
+	b.add_theme_stylebox_override("pressed", stylebox(color.darkened(0.12), 13, 1, edge, 10))
+	b.add_theme_stylebox_override("disabled", stylebox(color.lerp(CARD, 0.62), 13, 1, BORDER_STRONG, 10))
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.8))
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
@@ -218,9 +251,13 @@ static func ghost_button(text: String, color: Color = ACCENT) -> Button:
 	b.add_theme_color_override("font_hover_color", color)
 	b.add_theme_color_override("font_pressed_color", color.darkened(0.15))
 	b.custom_minimum_size = Vector2(0, 46)
-	b.add_theme_stylebox_override("normal", stylebox(CARD, 13, 1, BORDER, 10))
-	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 13, 1, BORDER, 10))
-	b.add_theme_stylebox_override("pressed", stylebox(BORDER, 13, 1, BORDER, 10))
+	var edge := BORDER_STRONG if transparency_reduced else BORDER
+	b.add_theme_stylebox_override("normal", stylebox(CARD, 13, 1, edge, 10))
+	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 13, 1, edge, 10))
+	b.add_theme_stylebox_override("pressed", stylebox(BORDER, 13, 1, edge, 10))
+	b.add_theme_stylebox_override("disabled", stylebox(CARD_SOFT, 13, 1, edge, 10))
+	b.add_theme_color_override("font_disabled_color", TEXT_3)
+	b.add_theme_color_override("icon_disabled_color", TEXT_3)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
@@ -258,17 +295,17 @@ static func back_button(text: String = "Retour") -> Button:
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
-static func icon_button(svg: String, size: int = 40, color: Color = DANGER, bg: Color = Color(0.988, 0.937, 0.937)) -> Button:
-	var b := Button.new()
+## Bouton-icône rond à contour fin (style iOS) : normal, appuyé, désactivé.
+static func icon_button(svg: String, size: int = 40, color: Color = DANGER, bg: Color = Color(0.988, 0.937, 0.937)) -> TapCard:
+	var b := TapCard.new()
 	b.custom_minimum_size = Vector2(size, size)
-	b.add_theme_stylebox_override("normal", stylebox(bg, 11, 0, Color(0, 0, 0, 0), 0))
-	b.add_theme_stylebox_override("hover", stylebox(bg.darkened(0.04), 11, 0, Color(0, 0, 0, 0), 0))
-	b.add_theme_stylebox_override("pressed", stylebox(bg.darkened(0.08), 11, 0, Color(0, 0, 0, 0), 0))
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	var ic := icon(svg, 20, color)
-	ic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	b.add_child(ic)
+	var edge := color.lerp(bg, 0.42 if transparency_reduced else 0.62)
+	b.set_styles(
+		stylebox(bg, 12, 1, edge, 0),
+		stylebox(bg.darkened(0.04), 12, 1, edge, 0),
+		stylebox(bg.darkened(0.12), 12, 1, edge.darkened(0.08), 0),
+		stylebox(bg.lerp(Color(1, 1, 1), 0.6), 12, 1, BORDER_STRONG, 0))
+	overlay(b, icon(svg, 20, color), 0)
 	return b
 
 static func line_edit(placeholder: String) -> LineEdit:
@@ -284,29 +321,27 @@ static func line_edit(placeholder: String) -> LineEdit:
 	e.add_theme_color_override("caret_color", ACCENT)
 	return e
 
-static func chip(text: String, active: bool) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.toggle_mode = true
-	b.button_pressed = active
-	b.add_theme_font_override("font", font_bold())
-	b.add_theme_font_size_override("font_size", 13)
+## Pastille de filtre tactile (glissement transparent, seuil de tap).
+static func chip(text: String, active: bool) -> TapCard:
+	var b := TapCard.new()
 	b.custom_minimum_size = Vector2(0, 34)
-	var c := ACCENT if active else TEXT_2
-	b.add_theme_color_override("font_color", c)
-	b.add_theme_color_override("font_hover_color", c)
-	b.add_theme_color_override("font_pressed_color", c)
-	b.add_theme_color_override("font_focus_color", c)
-	b.add_theme_stylebox_override("normal", stylebox(CARD, 17, 1, BORDER, 14))
-	b.add_theme_stylebox_override("hover", stylebox(CARD_SOFT, 17, 1, BORDER, 14))
-	b.add_theme_stylebox_override("pressed", stylebox(CARD, 17, 1, BORDER, 14))
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	var fill := CARD
+	if active:
+		fill = Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.26 if transparency_reduced else 0.14)
+	var edge := ACCENT if active else (BORDER_STRONG if transparency_reduced else BORDER)
+	var normal := stylebox(fill, 17, 1, edge, 14)
+	var hover := stylebox(fill.darkened(0.05), 17, 1, edge, 14)
+	var pressed := stylebox(fill.darkened(0.10), 17, 1, edge, 14)
+	b.set_styles(normal, hover, pressed)
+	var l := label(text, 13, ACCENT if active else TEXT_2, true)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.add_child(l)
 	return b
 
 static func badge(text: String, color: Color) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(color.r, color.g, color.b, 0.14)
+	sb.bg_color = Color(color.r, color.g, color.b, 0.24 if transparency_reduced else 0.14)
 	sb.set_corner_radius_all(8)
 	sb.content_margin_left = 8
 	sb.content_margin_right = 8
@@ -318,17 +353,17 @@ static func badge(text: String, color: Color) -> PanelContainer:
 	p.add_child(l)
 	return p
 
-## Carte cliquable : Button stylé, contenu posé en overlay (non interactif).
-static func clickable_card(height: int = 64, padding: int = 14) -> Button:
-	var b := Button.new()
+## Carte cliquable tactile : glissement = défilement, tap court = activation.
+static func tap_card(height: int = 64, padding: int = 14) -> TapCard:
+	var b := TapCard.new()
 	b.custom_minimum_size = Vector2(0, height)
-	b.add_theme_stylebox_override("normal", card_style(18, padding))
-	b.add_theme_stylebox_override("hover", card_style(18, padding, Color(0.985, 0.988, 0.996)))
-	b.add_theme_stylebox_override("pressed", card_style(18, padding, Color(0.957, 0.964, 0.980)))
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.set_styles(
+		card_style(18, padding),
+		card_style(18, padding, Color(0.985, 0.988, 0.996)),
+		card_style(18, padding, Color(0.945, 0.953, 0.976)))
 	return b
 
-static func overlay(btn: Button, node: Control, margin: int = 0) -> void:
+static func overlay(btn: Control, node: Control, margin: int = 0) -> void:
 	node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	node.offset_left = margin
 	node.offset_top = margin
@@ -374,7 +409,7 @@ static func section_title(text: String) -> Label:
 static func demo_tag() -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(ACCENT_2.r, ACCENT_2.g, ACCENT_2.b, 0.12)
+	sb.bg_color = Color(ACCENT_2.r, ACCENT_2.g, ACCENT_2.b, 0.22 if transparency_reduced else 0.12)
 	sb.set_corner_radius_all(8)
 	sb.content_margin_left = 8
 	sb.content_margin_right = 8
@@ -401,10 +436,10 @@ static func empty_state(title: String, message: String, svg: String = ICON_SHIEL
 	p.add_child(v)
 	return p
 
-static func vuln_card(v: Dictionary, on_press: Callable) -> Button:
+static func vuln_card(v: Dictionary, on_press: Callable) -> TapCard:
 	var sev := str(v.get("severity", ""))
 	var col := sev_color(sev)
-	var b := clickable_card(80, 14)
+	var b := tap_card(80, 14)
 	var row := hbox(12)
 	var bar := PanelContainer.new()
 	bar.custom_minimum_size = Vector2(5, 46)
@@ -434,8 +469,36 @@ static func vuln_card(v: Dictionary, on_press: Callable) -> Button:
 	row.add_child(right)
 
 	overlay(b, row, 14)
-	b.pressed.connect(on_press)
+	b.tapped.connect(on_press)
 	return b
+
+## Animation d'apparition en cascade des éléments d'une liste.
+static func stagger_in(node: Node, max_items: int = 8) -> void:
+	var kids := node.get_children()
+	var i := 0
+	for k in kids:
+		if i >= max_items:
+			break
+		if k is Control:
+			var c: Control = k
+			var delay := i * 0.03
+			c.modulate.a = 0.0
+			c.scale = Vector2(0.985, 0.985)
+			var prep := c.create_tween()
+			prep.tween_callback(func() -> void:
+				if is_instance_valid(c):
+					c.pivot_offset = c.size / 2.0).set_delay(delay)
+			var tween := c.create_tween().set_parallel(true)
+			tween.tween_property(c, "modulate:a", 1.0, 0.24).set_delay(delay)
+			tween.tween_property(c, "scale", Vector2.ONE, 0.26).set_delay(delay)
+			i += 1
+
+## Animation d'un bouton (Retour, actions) : léger rebond à l'appui.
+static func pulse(node: Control) -> void:
+	var tween := node.create_tween()
+	tween.tween_property(node, "scale", Vector2(0.94, 0.94), 0.08).set_trans(Tween.TRANS_SINE)
+	node.pivot_offset = node.size / 2.0
+	tween.tween_property(node, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 static func sev_dot(color: Color, size: int = 10) -> PanelContainer:
 	var p := PanelContainer.new()

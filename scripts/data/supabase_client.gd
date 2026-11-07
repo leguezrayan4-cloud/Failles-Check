@@ -1,9 +1,11 @@
 class_name SupabaseClient
 extends Node
-## FaillesCheck — client REST minimal pour Supabase (API PostgREST).
+## FaillesCheck — client REST minimal pour Supabase (PostgREST).
 ## Ne contient aucune clé : elles sont lues via RemoteConfig.
+## `token` permet d'envoyer le JWT de l'utilisateur connecté pour que les
+## règles RLS s'appliquent (sinon la clé publique est utilisée).
 
-const REQUEST_TIMEOUT := 8.0
+const REQUEST_TIMEOUT := 10.0
 
 var _http: HTTPRequest
 
@@ -13,21 +15,22 @@ func _ready() -> void:
 	add_child(_http)
 
 ## Coroutine. Retourne { ok, code, data, error }.
-func request(method: int, path: String, params: Dictionary = {}, body: Variant = null) -> Dictionary:
+func request(method: int, path: String, params: Dictionary = {}, body: Variant = null, token: String = "") -> Dictionary:
 	var cfg := RemoteConfig.load_config()
 	var base := str(cfg.get("url", ""))
 	var key := str(cfg.get("anon_key", ""))
 	if base == "" or key == "":
-		return {"ok": false, "code": 0, "data": null, "error": "Synchronisation distante non configurée."}
+		return {"ok": false, "code": 0, "data": null, "error": "Service distant non configuré."}
 
 	var url := "%s/rest/v1/%s" % [base, path]
 	var query := _encode_params(params)
 	if query != "":
 		url += "?" + query
 
+	var bearer := token if token != "" else key
 	var headers := PackedStringArray([
 		"apikey: " + key,
-		"Authorization: Bearer " + key,
+		"Authorization: Bearer " + bearer,
 		"Content-Type: application/json",
 		"Accept: application/json",
 		"Prefer: return=representation,resolution=merge-duplicates",
@@ -54,9 +57,13 @@ func request(method: int, path: String, params: Dictionary = {}, body: Variant =
 			return {"ok": false, "code": http_code, "data": data, "error": "Le service distant n'a pas répondu à temps."}
 		return {"ok": false, "code": http_code, "data": data, "error": "Connexion au service distant impossible."}
 	if http_code == 401 or http_code == 403:
-		return {"ok": false, "code": http_code, "data": data, "error": "Accès refusé par le service distant (clé ou règles RLS)."}
+		return {"ok": false, "code": http_code, "data": data, "error": "Accès refusé (session expirée ou règles RLS)."}
 	if http_code < 200 or http_code >= 300:
-		return {"ok": false, "code": http_code, "data": data, "error": "Le service distant a répondu HTTP %d." % http_code}
+		var detail := ""
+		if typeof(data) == TYPE_DICTIONARY:
+			detail = str((data as Dictionary).get("message", ""))
+		return {"ok": false, "code": http_code, "data": data,
+			"error": "Le service distant a répondu HTTP %d%s" % [http_code, (" : " + detail) if detail != "" else "."]}
 	return {"ok": true, "code": http_code, "data": data, "error": ""}
 
 func _encode_params(params: Dictionary) -> String:

@@ -1,0 +1,25 @@
+# Cache Godot
+.godot/
+
+# Addon d'assistance IA, non publié
+addons/ziva_agent/
+
+# Builds et sorties
+build/
+export/
+*.xcarchive
+*.ipa
+
+# Secrets et signatures
+*.p12
+*.p8
+*.mobileprovision
+*.keystore
+*.jks
+secrets.*
+.env
+
+# Système
+.DS_Store
+Thumbs.db
+desktop.ini

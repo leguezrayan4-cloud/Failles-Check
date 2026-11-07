@@ -78,6 +78,8 @@ func _render_form() -> void:
 	var mail := UI.line_edit("Adresse e-mail")
 	mail.name = "AccountEmail"
 	mail.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_EMAIL_ADDRESS
+	mail.text_submitted.connect(func(_t: String) -> void:
+		_on_primary())
 	# Dernier compte utilisé : pré-rempli (jamais le mot de passe).
 	if DataStore.last_email() != "":
 		mail.text = DataStore.last_email()
@@ -87,6 +89,8 @@ func _render_form() -> void:
 		pwd.name = "AccountPassword"
 		pwd.secret = true
 		pwd.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_PASSWORD
+		pwd.text_submitted.connect(func(_t: String) -> void:
+			_on_primary())
 		v.add_child(pwd)
 	card.add_child(v)
 	_body.add_child(card)
@@ -163,6 +167,12 @@ func _on_primary() -> void:
 		_render()
 		return
 	_busy = true
+	var busy_text := "Connexion…"
+	if _mode == "signup":
+		busy_text = "Création du compte…"
+	elif _mode == "recover":
+		busy_text = "Envoi du lien…"
+	DataStore.start_busy(busy_text)
 	var res: Dictionary
 	if _mode == "signup":
 		res = await DataStore.auth.sign_up(mail, pwd, display)
@@ -171,6 +181,7 @@ func _on_primary() -> void:
 	else:
 		res = await DataStore.auth.sign_in(mail, pwd)
 	_busy = false
+	DataStore.end_busy()
 	if bool(res.get("ok", false)):
 		if _mode == "recover":
 			_info = "Lien de réinitialisation envoyé."
@@ -255,7 +266,9 @@ func _on_save_name() -> void:
 		_error = "Le nom ne peut pas être vide."
 		_render()
 		return
+	DataStore.start_busy("Enregistrement…")
 	var res: Dictionary = await DataStore.auth.update_display_name(display)
+	DataStore.end_busy()
 	_info = "Nom mis à jour." if bool(res.get("ok", false)) else ""
 	_error = "" if bool(res.get("ok", false)) else str(res.get("error", "Modification impossible."))
 	_render()
@@ -266,7 +279,9 @@ func _on_save_email() -> void:
 		_error = "Adresse e-mail invalide."
 		_render()
 		return
+	DataStore.start_busy("Envoi du message…")
 	var res: Dictionary = await DataStore.auth.update_email(mail)
+	DataStore.end_busy()
 	if bool(res.get("ok", false)):
 		_info = "Validation envoyée à l'ancienne et à la nouvelle adresse."
 		_error = ""
@@ -276,14 +291,18 @@ func _on_save_email() -> void:
 	_render()
 
 func _on_sign_out() -> void:
+	DataStore.start_busy("Déconnexion…")
 	await DataStore.auth.sign_out()
+	DataStore.end_busy()
 	_mode = "signin"
 	_info = "Déconnecté."
 	_error = ""
 	_render()
 
 func _on_delete() -> void:
+	DataStore.start_busy("Suppression du compte…")
 	var res: Dictionary = await DataStore.auth.delete_account()
+	DataStore.end_busy()
 	if bool(res.get("ok", false)):
 		_mode = "signin"
 		_info = "Compte supprimé."

@@ -132,42 +132,6 @@ func open_with(filters: Dictionary) -> void:
 		flow5.add_child(chip)
 	_body.add_child(flow5)
 
-	# --- Filtres enregistrés ---
-	_body.add_child(UI.section_title("Filtres enregistrés"))
-	if DataStore.filter_presets.is_empty():
-		_body.add_child(UI.label("Aucun filtre enregistré pour le moment.", 12, UI.TEXT_2, false, true))
-	else:
-		var flow6 := _flow()
-		for p in DataStore.filter_presets:
-			if typeof(p) != TYPE_DICTIONARY:
-				continue
-			var pname := str(p.get("name", ""))
-			var pchip := UI.chip(pname, false)
-			pchip.name = "Preset_" + pname
-			pchip.tapped.connect(_apply_preset.bind(pname))
-			flow6.add_child(pchip)
-			var del_preset := UI.close_button(24)
-			del_preset.name = "PresetDelete_" + pname
-			del_preset.pressed.connect(func() -> void:
-				DataStore.delete_filter_preset(pname)
-				rebuild())
-			flow6.add_child(del_preset)
-		_body.add_child(flow6)
-	var save_row := UI.hbox(8)
-	var preset_name := UI.line_edit("Nom du filtre")
-	preset_name.name = "PresetName"
-	preset_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	save_row.add_child(preset_name)
-	var save_preset := UI.ghost_button("Enregistrer", UI.ACCENT)
-	save_preset.name = "PresetSave"
-	save_preset.pressed.connect(func() -> void:
-		var f := _body.find_child("PresetName", true, false)
-		if f is LineEdit:
-			DataStore.save_filter_preset((f as LineEdit).text, _filters)
-			rebuild())
-	save_row.add_child(save_preset)
-	_body.add_child(save_row)
-
 	var row := UI.hbox(10)
 	var reset := UI.ghost_button("Réinitialiser", UI.TEXT_2)
 	reset.name = "FilterReset"
@@ -183,24 +147,6 @@ func open_with(filters: Dictionary) -> void:
 
 	if not is_open():
 		open()
-
-func rebuild() -> void:
-	clear_body()
-	build_body()
-
-func _apply_preset(preset_label: String) -> void:
-	for p in DataStore.filter_presets:
-		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")) == preset_label:
-			var f: Variant = p.get("filters", null)
-			if typeof(f) == TYPE_DICTIONARY:
-				var merged: Dictionary = {
-					"severities": [], "software_ids": [], "period": "all",
-					"min_score": 0.0, "sort": "score", "saved_only": false,
-				}
-				merged.merge((f as Dictionary).duplicate(true), true)
-				_filters = merged
-				rebuild()
-			return
 
 func _flow() -> HFlowContainer:
 	var f := HFlowContainer.new()

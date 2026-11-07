@@ -85,6 +85,7 @@ func _ready() -> void:
 	bar_margin.add_child(bar_row)
 	var title := UI.label(sheet_title(), 17, UI.TEXT, true)
 	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar_row.add_child(title)
 	bar_row.add_child(UI.spacer())
 	var close_btn := UI.close_button(38)
@@ -179,6 +180,7 @@ func _on_backdrop_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	if not _is_open:
 		return
+	_kb_dismiss(event)
 	if event is InputEventScreenTouch:
 		if (event as InputEventScreenTouch).pressed:
 			_begin_pull((event as InputEventScreenTouch).position)
@@ -195,6 +197,31 @@ func _input(event: InputEvent) -> void:
 				_end_pull()
 	elif event is InputEventMouseMotion and _pull_active:
 		_update_pull((event as InputEventMouseMotion).global_position)
+
+## Ferme le clavier si l'appui est en dehors du champ de saisie actif.
+func _kb_dismiss(event: InputEvent) -> void:
+	var pos := Vector2.ZERO
+	var pressed := false
+	if event is InputEventScreenTouch:
+		pressed = (event as InputEventScreenTouch).pressed
+		pos = (event as InputEventScreenTouch).position
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		pressed = mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT
+		pos = mb.global_position
+	if not pressed:
+		return
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var focus := vp.gui_get_focus_owner()
+	if focus == null or not (focus is LineEdit or focus is TextEdit):
+		return
+	if focus.get_global_rect().has_point(pos):
+		return
+	vp.gui_release_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_hide()
 
 func _begin_pull(pos: Vector2) -> void:
 	_pull_active = false

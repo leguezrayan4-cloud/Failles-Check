@@ -13,6 +13,10 @@ var _panel: PanelContainer
 var _body: VBoxContainer
 var _is_open := false
 var _tween: Tween
+var _drag_active := false
+var _drag_start_y := 0.0
+var _drag_base_y := 0.0
+var _drag_dy := 0.0
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -49,10 +53,13 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(root)
 
+	# Zone de préhension : un glissement vers le bas referme le panneau.
 	var handle_margin := MarginContainer.new()
-	handle_margin.add_theme_constant_override("margin_top", 9)
-	handle_margin.add_theme_constant_override("margin_bottom", 5)
-	handle_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	handle_margin.name = "SheetGrabber"
+	handle_margin.add_theme_constant_override("margin_top", 10)
+	handle_margin.add_theme_constant_override("margin_bottom", 8)
+	handle_margin.mouse_filter = Control.MOUSE_FILTER_STOP
+	handle_margin.gui_input.connect(_on_grabber_input)
 	root.add_child(handle_margin)
 	var handle := PanelContainer.new()
 	handle.custom_minimum_size = Vector2(42, 5)
@@ -74,7 +81,7 @@ func _ready() -> void:
 	var bar_row := UI.hbox(8)
 	bar_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_margin.add_child(bar_row)
-	var back := UI.back_button()
+	var back := UI.back_icon_button(40)
 	back.name = "SheetBackButton"
 	back.pressed.connect(_on_back_pressed)
 	bar_row.add_child(back)
@@ -142,6 +149,54 @@ func close() -> void:
 func _on_back_pressed() -> void:
 	close()
 
+# --- Fermeture par glissement vers le bas (zone de préhension) --------------
+func _on_grabber_input(event: InputEvent) -> void:
+	if not _is_open:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mb.pressed:
+			_begin_drag(mb.global_position.y)
+		else:
+			_end_drag()
+	elif event is InputEventScreenTouch:
+		var st := event as InputEventScreenTouch
+		if st.pressed:
+			_begin_drag(st.position.y)
+		else:
+			_end_drag()
+	elif event is InputEventScreenDrag:
+		_apply_drag((event as InputEventScreenDrag).position.y)
+	elif event is InputEventMouseMotion and _drag_active:
+		_apply_drag((event as InputEventMouseMotion).global_position.y)
+
+func _begin_drag(y: float) -> void:
+	_drag_active = true
+	_drag_start_y = y
+	_drag_base_y = _panel.position.y
+	_drag_dy = 0.0
+	if _tween != null and _tween.is_valid():
+		_tween.kill()
+
+func _apply_drag(y: float) -> void:
+	if not _drag_active:
+		return
+	_drag_dy = maxf(0.0, y - _drag_start_y)
+	_panel.position.y = _drag_base_y + _drag_dy
+
+func _end_drag() -> void:
+	if not _drag_active:
+		return
+	_drag_active = false
+	if _drag_dy > 90.0:
+		close()
+	else:
+		var t := create_tween()
+		t.tween_property(_panel, "position:y", _drag_base_y, 0.18).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_drag_dy = 0.0
+
 func _on_backdrop_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 		close()
@@ -201,11 +256,6 @@ func _fill(v: Dictionary) -> void:
 	if url != "":
 		_body.add_child(UI.text_section("Référence officielle", url))
 
-	if bool(v.get("demo", false)):
-		var tag := UI.demo_tag()
-		tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		_body.add_child(tag)
-	else:
-		var src := UI.badge("Source : %s" % str(v.get("source", "NVD")), UI.ACCENT)
-		src.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		_body.add_child(src)
+	var src := UI.badge("Source : %s" % str(v.get("source", "NVD")), UI.ACCENT)
+	src.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_body.add_child(src)

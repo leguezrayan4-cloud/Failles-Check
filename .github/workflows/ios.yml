@@ -21,7 +21,7 @@ jobs:
       - name: Exporter le projet Godot vers Xcode
         run: |
           mkdir -p build/ios
-          "$HOME/godot/Godot.app/Contents/MacOS/Godot" --headless --export-release "iOS" build/ios/FaillesCheck.xcodeproj
+          "$HOME/godot/Godot.app/Contents/MacOS/Godot" --headless --export-release "FaillesCheck" build/ios/FaillesCheck.xcodeproj
           find build -maxdepth 3 -name "*.xcodeproj"
 
       - name: Compiler l'app sans signature

@@ -16,15 +16,22 @@ func refresh() -> void:
 	clear_content()
 	content.add_child(_hero())
 
+	# Chargement réel en cours : structure affichée, données ensuite.
+	if DataStore.is_loading() and DataStore.vulnerabilities.is_empty():
+		content.add_child(UI.skeleton_list(3))
+		return
+
 	var has_data := not DataStore.vulnerabilities.is_empty() or not DataStore.software.is_empty()
 	if not has_data:
 		content.add_child(UI.empty_state(
 			"Aucune donnée",
-			"Activez une source dans Réglages."))
+			"Activez une source dans Paramètres."))
 		UI.stagger_in(content, 6)
 		return
 
 	content.add_child(_stats())
+	if not DataStore.vulnerabilities.is_empty():
+		content.add_child(_trends())
 
 	if not DataStore.vulnerabilities.is_empty():
 		var head := UI.hbox(8)
@@ -103,3 +110,54 @@ func _open(id: String) -> void:
 	var main := get_tree().current_scene
 	if main != null and main.has_method("open_detail_sheet"):
 		main.open_detail_sheet(id)
+## Carte "Tendances" : nombre de failles publiées par mois (données réelles).
+func _trends() -> Control:
+	var buckets := {}
+	for v in DataStore.vulnerabilities:
+		var d := str(v.get("date", ""))
+		if d.length() < 7:
+			continue
+		var key := d.substr(0, 7)
+		buckets[key] = int(buckets.get(key, 0)) + 1
+	if buckets.is_empty():
+		return UI.card(16)
+
+	var keys: Array = buckets.keys()
+	keys.sort()
+	var recent: Array = keys.slice(max(0, keys.size() - 6))
+	var values: Array = []
+	var labels: Array = []
+	var max_v := 1
+	for k in recent:
+		var c := int(buckets[k])
+		values.append(float(c))
+		max_v = max(max_v, c)
+		labels.append(_month_label(str(k)))
+
+	var card := UI.card(16)
+	var v := UI.vbox(10)
+	var head := UI.hbox(8)
+	head.add_child(UI.label("Tendances", 15, UI.TEXT, true))
+	head.add_child(UI.spacer())
+	var crit := 0
+	var this_month := str(Time.get_date_string_from_system()).substr(0, 7)
+	for k in buckets:
+		if str(k) == this_month:
+			crit = int(buckets[k])
+	head.add_child(UI.badge("%d en 6 mois" % values.size() if recent.size() > 0 else "—", UI.TEXT_3))
+	v.add_child(head)
+	v.add_child(UI.label("%d faille(s) publiée(s) ce mois-ci · maximum %d sur un mois" % [crit, max_v], 12, UI.TEXT_2, false, true))
+
+	var chart := SparkChart.new()
+	chart.custom_minimum_size = Vector2(0, 96)
+	chart.set_data(labels, values, UI.ACCENT)
+	v.add_child(chart)
+	card.add_child(v)
+	return card
+
+func _month_label(ym: String) -> String:
+	var months := ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+	var m := int(ym.substr(5, 2)) if ym.length() >= 7 else 0
+	if m < 1 or m > 12:
+		return ym
+	return str(months[m - 1])

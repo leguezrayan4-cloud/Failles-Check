@@ -1,9 +1,9 @@
 class_name SettingsPage
 extends AppPage
-## Onglet Réglages — compte, apparence, notifications, stockage, réinitialisation.
+## Onglet Paramètres — compte, apparence, notifications, cache.
 
 func page_title() -> String:
-	return "Réglages"
+	return "Paramètres"
 
 func page_subtitle() -> String:
 	return "Compte et préférences"
@@ -50,31 +50,18 @@ func refresh() -> void:
 
 	# --- Notifications ---
 	content.add_child(UI.section_title("Notifications"))
-	content.add_child(_switch_card("Messages",
-		"Confirmations d'action et informations.",
+	var notif_desc := "Alertes de failles critiques sur votre téléphone."
+	if not NotificationService.available():
+		notif_desc += " Disponibles sur l'application mobile."
+	content.add_child(_switch_card("Alertes de vulnérabilités",
+		notif_desc,
 		DataStore.notifications_enabled(), "NotificationsSwitch", _on_notifications))
 
-	# --- Stockage local ---
-	content.add_child(UI.section_title("Stockage local"))
-	var info := DataStore.cache_info()
-	var updated := str(info.get("updated", ""))
-	if updated == "":
-		updated = "jamais"
-	content.add_child(UI.info_card([
-		["Vulnérabilités en cache", str(info.get("count", 0))],
-		["Dernière mise à jour", updated],
-	]))
+	# --- Cache (le bouton vide réellement les données mises en cache) ---
 	var clear := UI.ghost_button("Vider le cache", UI.TEXT_2)
 	clear.name = "ClearCacheButton"
 	clear.pressed.connect(_on_clear_cache)
 	content.add_child(clear)
-
-	# --- Réinitialisation ---
-	content.add_child(UI.section_title("Réinitialisation"))
-	var reset := UI.ghost_button("Réinitialiser les données", UI.DANGER)
-	reset.name = "ResetButton"
-	reset.pressed.connect(_on_reset)
-	content.add_child(reset)
 
 	# --- Déconnexion ---
 	if signed_in:
@@ -120,9 +107,6 @@ func _on_notifications(value: bool) -> void:
 
 func _on_clear_cache() -> void:
 	DataStore.clear_cache()
-
-func _on_reset() -> void:
-	DataStore.reset_all()
 
 func _on_sign_out() -> void:
 	await DataStore.auth.sign_out()

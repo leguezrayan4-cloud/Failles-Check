@@ -2,12 +2,21 @@ class_name SearchPage
 extends AppPage
 ## Onglet Recherche — catalogue réel, filtres multiples via un seul bouton.
 
+const DEFAULT_FILTERS := {
+	"severities": [],
+	"software_ids": [],
+	"period": "all",
+	"min_score": 0.0,
+	"sort": "score",
+	"saved_only": false,
+}
+
 var _query: String = ""
-var _severities: Array = []
-var _software_ids: Array = []
+var _filters: Dictionary = DEFAULT_FILTERS.duplicate(true)
 var _error: String = ""
 var _status: String = ""
 var _count_label: Label
+var _summary_label: Label
 var _results_box: VBoxContainer
 var _online_button: Button
 var _filter_button: Button
@@ -50,7 +59,6 @@ func refresh() -> void:
 	content.add_child(_results_box)
 	_apply()
 
-## Validation au clavier : ferme le clavier et applique la recherche.
 func _on_submitted(_text: String) -> void:
 	_close_keyboard()
 	_apply()
@@ -75,7 +83,6 @@ func _build_online_row() -> Control:
 		box.add_child(UI.label("Source en ligne désactivée", 12, UI.TEXT_2, false, true))
 	return box
 
-## Un seul bouton « Filtrer » + résumé court des filtres actifs.
 func _build_filter_row() -> Control:
 	var row := UI.hbox(10)
 	_filter_button = UI.ghost_icon_button(UI.ICON_FILTER, "Filtrer", UI.TEXT)
@@ -83,19 +90,28 @@ func _build_filter_row() -> Control:
 	_filter_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_filter_button.pressed.connect(_on_filter_pressed)
 	row.add_child(_filter_button)
-	var summary := UI.label(_filter_summary(), 12, UI.TEXT_2, false, true)
-	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	summary.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	row.add_child(summary)
+	_summary_label = UI.label(_filter_summary(), 12, UI.TEXT_2, false, true)
+	_summary_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_summary_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(_summary_label)
 	return row
 
 func _filter_summary() -> String:
 	var parts: Array = []
-	for k in _severities:
+	for k in _filters.get("severities", []):
 		parts.append(UI.sev_label(str(k)))
-	if not _software_ids.is_empty():
-		parts.append("%d logiciel(s)" % _software_ids.size())
+	var sw: Array = _filters.get("software_ids", [])
+	if not sw.is_empty():
+		parts.append("%d logiciel(s)" % sw.size())
+	if bool(_filters.get("saved_only", false)):
+		parts.append("enregistrées")
+	var period := str(_filters.get("period", "all"))
+	if period != "all":
+		parts.append(period + " j" if period != "365" else "1 an")
+	var min_score := float(_filters.get("min_score", 0.0))
+	if min_score > 0.0:
+		parts.append("≥ %d" % int(min_score))
 	if parts.is_empty():
 		return "Aucun filtre"
 	return " · ".join(parts)
@@ -104,13 +120,14 @@ func _on_filter_pressed() -> void:
 	_close_keyboard()
 	var main := get_tree().current_scene
 	if main != null and main.has_method("open_filter_sheet"):
-		main.open_filter_sheet(_severities, _software_ids)
+		main.open_filter_sheet(_filters)
 
-## Appelé par le panneau de filtres.
-func apply_filters(severities: Array, software_ids: Array) -> void:
-	_severities = severities.duplicate()
-	_software_ids = software_ids.duplicate()
-	refresh()
+## Appelé par le panneau de filtres : mise à jour de la liste uniquement.
+func apply_filters(filters: Dictionary) -> void:
+	_filters = filters.duplicate(true)
+	if _summary_label != null:
+		_summary_label.text = _filter_summary()
+	_apply()
 
 func _on_online() -> void:
 	_error = ""
@@ -119,7 +136,7 @@ func _on_online() -> void:
 	refresh()
 
 func _on_loading(_is_loading: bool) -> void:
-	refresh()
+	_apply()
 
 func _on_fetch(ok: bool, message: String, _source: String) -> void:
 	if ok:
@@ -140,6 +157,13 @@ func _apply() -> void:
 	for c in _results_box.get_children():
 		_results_box.remove_child(c)
 		c.queue_free()
+
+	# Chargement réel en cours : structure affichée (squelettes), puis données.
+	if DataStore.is_loading():
+		if _count_label != null:
+			_count_label.text = "Chargement…"
+		_results_box.add_child(UI.skeleton_list(4))
+		return
 
 	if DataStore.vulnerabilities.is_empty():
 		if _count_label != null:
@@ -166,15 +190,35 @@ func _apply() -> void:
 
 func _filtered() -> Array:
 	var q := _query.strip_edges().to_lower()
+	var severities: Array = _filters.get("severities", [])
+	var software_ids: Array = _filters.get("software_ids", [])
+	var period := str(_filters.get("period", "all"))
+	var min_score := float(_filters.get("min_score", 0.0))
+	var sort_key := str(_filters.get("sort", "score"))
+	var saved_only := bool(_filters.get("saved_only", false))
+
 	var names: Array = []
-	for id in _software_ids:
+	for id in software_ids:
 		for s in DataStore.software:
 			if str(s.get("id", "")) == str(id):
 				names.append(str(s.get("name", "")).to_lower())
+
+	var cutoff := 0
+	if period != "all":
+		cutoff = int(Time.get_unix_time_from_system()) - int(period) * 86400
+
 	var out: Array = []
 	for v in DataStore.vulnerabilities:
-		if not _severities.is_empty() and not _severities.has(str(v.get("severity", ""))):
+		if not severities.is_empty() and not severities.has(str(v.get("severity", ""))):
 			continue
+		if min_score > 0.0 and float(v.get("score", 0.0)) < min_score:
+			continue
+		if cutoff > 0:
+			var d := str(v.get("date", ""))
+			if d.length() < 10:
+				continue
+			if int(Time.get_unix_time_from_datetime_string(d)) < cutoff:
+				continue
 		if not names.is_empty():
 			var prod := str(v.get("product", "")).to_lower()
 			var matched := false
@@ -184,12 +228,33 @@ func _filtered() -> Array:
 					break
 			if not matched:
 				continue
+		if saved_only and not DataStore.is_saved(str(v.get("id", ""))):
+			continue
 		if q != "":
 			var hay := "%s %s %s %s" % [str(v.get("title", "")), str(v.get("product", "")), str(v.get("id", "")), str(v.get("summary", ""))]
 			if not hay.to_lower().contains(q):
 				continue
 		out.append(v)
+
+	match sort_key:
+		"date":
+			out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return str(a.get("date", "")) > str(b.get("date", "")))
+		"severity":
+			out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return _sev_rank(str(a.get("severity", ""))) > _sev_rank(str(b.get("severity", ""))))
+		_:
+			out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+				return float(a.get("score", 0.0)) > float(b.get("score", 0.0)))
 	return out
+
+func _sev_rank(key: String) -> int:
+	match key:
+		"critique": return 4
+		"elevee": return 3
+		"moyenne": return 2
+		"faible": return 1
+	return 0
 
 ## Ouvre le détail par-dessus l'écran courant (on reste dans le contexte).
 func _open(id: String) -> void:

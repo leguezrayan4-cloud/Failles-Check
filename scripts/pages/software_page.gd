@@ -31,9 +31,9 @@ func build() -> void:
 	_debounce.wait_time = DEBOUNCE
 	add_child(_debounce)
 	_debounce.timeout.connect(_request_remote)
-	refresh()
+	refresh(true)
 
-func refresh() -> void:
+func refresh(stagger: bool = false) -> void:
 	clear_content()
 	_recompute_status()
 
@@ -59,7 +59,8 @@ func refresh() -> void:
 	_list = UI.vbox(10)
 	content.add_child(_list)
 	_render_list()
-	UI.stagger_in(content, 6)
+	if stagger:
+		UI.stagger_in(content, 6)
 
 # --- Saisie ----------------------------------------------------------------
 func _on_text_changed(t: String) -> void:
@@ -80,8 +81,6 @@ func _on_submitted(_text: String) -> void:
 	_close_keyboard()
 	if not _suggestions.is_empty():
 		_add_from_suggestion(_suggestions[0])
-	elif _query.strip_edges() != "":
-		_add_manual()
 
 func _close_keyboard() -> void:
 	var vp := get_viewport()
@@ -122,7 +121,7 @@ func _recompute_status() -> void:
 	if q == "":
 		_status = ""
 	elif _suggestions.is_empty():
-		_status = "Aucun résultat — ajoutez-le manuellement."
+		_status = "Aucun logiciel correspondant."
 	else:
 		_status = ""
 
@@ -147,18 +146,6 @@ func _render_suggestions() -> void:
 		for item in _suggestions:
 			_sugg_box.add_child(_suggestion_card(item))
 
-	var manual := UI.tap_card(56, 14)
-	var row := UI.hbox(10)
-	var ic := UI.icon(UI.ICON_PLUS, 20, UI.ACCENT)
-	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(ic)
-	var mid := UI.vbox(2)
-	mid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	mid.add_child(UI.label("Ajouter « %s »" % q, 15, UI.TEXT, true, true))
-	row.add_child(mid)
-	UI.overlay(manual, row, 14)
-	manual.tapped.connect(_add_manual)
-	_sugg_box.add_child(manual)
 	UI.stagger_in(_sugg_box, 6)
 
 func _suggestion_card(item: Dictionary) -> TapCard:
@@ -186,9 +173,6 @@ func _suggestion_card(item: Dictionary) -> TapCard:
 	UI.overlay(card, row, 14)
 	card.tapped.connect(_add_from_suggestion.bind(item))
 	return card
-
-func _add_manual() -> void:
-	_add_from_suggestion({"name": _query.strip_edges()})
 
 func _add_from_suggestion(item: Dictionary) -> void:
 	var err := DataStore.add_software(
@@ -232,10 +216,15 @@ func _render_list() -> void:
 
 	for s in items:
 		_list.add_child(_software_card(s))
+	# Chargement en cours : une carte squelette indique l'activité.
+	if DataStore.is_loading():
+		_list.add_child(UI.skeleton_software_card())
 
+## Changement de filtre : on ne reconstruit que la liste (aucun rechargement
+## de page, aucun clignotement).
 func _set_favorites_only(value: bool) -> void:
 	_only_favorites = value
-	refresh()
+	_render_list()
 
 func _software_card(s: Dictionary) -> Control:
 	var id := str(s.get("id", ""))

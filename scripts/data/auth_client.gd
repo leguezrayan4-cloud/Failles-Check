@@ -4,14 +4,19 @@ extends Node
 ##
 ## Aucune clé secrète : seule la clé publique « anon » est utilisée, lue dans
 ## user://faillescheck_remote.json ou les variables d'environnement.
-## Aucun mot de passe n'est stocké : la session ne vit qu'en mémoire.
+## Aucun mot de passe n'est stocké : seuls les jetons de session permettent de
+## rester connecté au prochain démarrage (révoqués à la déconnexion).
 
 signal state_changed
 signal failed(message: String)
+signal restore_finished
+
+const SESSION_PATH := "user://faillescheck_session.json"
 
 var access_token := ""
 var refresh_token := ""
 var user: Dictionary = {}
+var restoring := false
 
 var _http: HTTPRequest
 var _rest: SupabaseClient
@@ -30,6 +35,7 @@ func user_id() -> String:
 ## Crée (ou met à jour) la ligne `profiles` de l'utilisateur connecté.
 ## Les règles RLS garantissent qu'un utilisateur ne peut écrire que la sienne.
 func ensure_profile() -> Dictionary:
+	_ensure_http()
 	if not is_signed_in():
 		return {"ok": false, "error": "Non connecté."}
 	var uid := user_id()
@@ -64,7 +70,20 @@ func _base() -> String:
 func _key() -> String:
 	return str(RemoteConfig.load_config().get("anon_key", ""))
 
+## Crée les nœuds réseau si nécessaire (l'autoload peut être prêt avant eux).
+func _ensure_http() -> void:
+	if _http == null:
+		_http = HTTPRequest.new()
+		_http.name = "AuthHttp"
+		_http.timeout = 20.0
+		add_child(_http)
+	if _rest == null:
+		_rest = SupabaseClient.new()
+		_rest.name = "AuthRest"
+		add_child(_rest)
+
 func _request(method: int, path: String, body: Dictionary, token: String = "") -> Dictionary:
+	_ensure_http()
 	if not is_configured():
 		return {"ok": false, "error": "Configuration requise."}
 	var headers := PackedStringArray([
@@ -93,13 +112,77 @@ func _apply_session(d: Dictionary) -> void:
 	refresh_token = str(d.get("refresh_token", ""))
 	var u: Variant = d.get("user", {})
 	user = u if typeof(u) == TYPE_DICTIONARY else {}
+	_save_session()
 	state_changed.emit()
 
 func _clear_session() -> void:
 	access_token = ""
 	refresh_token = ""
 	user = {}
+	remove_session_file()
 	state_changed.emit()
+
+# --- Session persistante (rester connecté au prochain lancement) -----------
+func is_restoring() -> bool:
+	return restoring
+
+func remove_session_file() -> void:
+	if FileAccess.file_exists(SESSION_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SESSION_PATH))
+
+func _save_session() -> void:
+	if refresh_token == "":
+		return
+	var f := FileAccess.open(SESSION_PATH, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify({
+		"refresh_token": refresh_token,
+		"email": str(user.get("email", "")),
+		"user": user,
+	}, "  "))
+	f.close()
+
+## Restaure la session enregistrée (jeton de rafraîchissement).
+func restore_session() -> bool:
+	if not is_configured():
+		restore_finished.emit()
+		return false
+	if not FileAccess.file_exists(SESSION_PATH):
+		restore_finished.emit()
+		return false
+	var txt := FileAccess.get_file_as_string(SESSION_PATH)
+	var parsed: Variant = JSON.parse_string(txt) if txt.strip_edges() != "" else null
+	if typeof(parsed) != TYPE_DICTIONARY:
+		remove_session_file()
+		restore_finished.emit()
+		return false
+	var stored: Dictionary = parsed
+	var token := str(stored.get("refresh_token", ""))
+	if token == "":
+		remove_session_file()
+		restore_finished.emit()
+		return false
+	restoring = true
+	var res: Dictionary = await _request(
+		HTTPClient.METHOD_POST, "/auth/v1/token?grant_type=refresh_token",
+		{"refresh_token": token})
+	restoring = false
+	if bool(res.get("ok", false)):
+		var d: Variant = res.get("data", {})
+		if typeof(d) == TYPE_DICTIONARY:
+			_apply_session(d)
+			restore_finished.emit()
+			return true
+	# Jeton expiré ou révoqué : on repart proprement sur l'écran de connexion.
+	# En cas de simple panne réseau, la session est conservée pour plus tard.
+	var code := int(res.get("code", 0))
+	if code == 400 or code == 401 or code == 403:
+		refresh_token = ""
+		remove_session_file()
+		state_changed.emit()
+	restore_finished.emit()
+	return false
 
 # --- Inscription / connexion ----------------------------------------------
 func sign_up(mail: String, password: String, new_name: String) -> Dictionary:

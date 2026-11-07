@@ -2,10 +2,9 @@ class_name RemoteConfig
 extends RefCounted
 ## FaillesCheck — configuration de la couche distante (Supabase).
 ##
-## Configuration publique intégrée (URL + clé publishable, sans secret) :
-##   EMBEDDED_URL / EMBEDDED_KEY. Elles peuvent être remplacées par :
-##  1) le fichier LOCAL : user://faillescheck_remote.json
-##  2) les variables d'environnement (prioritaires) :
+## AUCUNE clé n'est écrite dans le projet : la configuration est lue
+##  1) dans un fichier LOCAL hors du projet : user://faillescheck_remote.json
+##  2) ou dans les variables d'environnement (prioritaires) :
 ##       FAILLESCHECK_SUPABASE_URL
 ##       FAILLESCHECK_SUPABASE_ANON_KEY
 ## Seule la clé PUBLIQUE (publishable / anon) est acceptée : une clé
@@ -16,17 +15,14 @@ const FILE_PATH := "user://faillescheck_remote.json"
 const ENV_URL := "FAILLESCHECK_SUPABASE_URL"
 const ENV_KEY := "FAILLESCHECK_SUPABASE_ANON_KEY"
 
-const EMBEDDED_URL := "https://shxsxgezfsjhorknnsaq.supabase.co"
-const EMBEDDED_KEY := "sb_publishable_vJ-S_vOGSE1_2ITlHryPvw_lmJt-_P6"
-
 const DEFAULT_TABLE_PROFILES := "profiles"
 const DEFAULT_TABLE_USER_SOFTWARE := "user_software"
 const DEFAULT_TABLE_VULN := "vulnerabilities"
 
 static func load_config() -> Dictionary:
 	var cfg := {
-		"url": EMBEDDED_URL,
-		"anon_key": EMBEDDED_KEY,
+		"url": "",
+		"anon_key": "",
 		"profiles_table": DEFAULT_TABLE_PROFILES,
 		"user_software_table": DEFAULT_TABLE_USER_SOFTWARE,
 		"vuln_table": DEFAULT_TABLE_VULN,

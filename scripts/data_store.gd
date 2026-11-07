@@ -28,6 +28,11 @@ var software: Array = []
 var vulnerabilities: Array = []
 var selected_id: String = ""
 var last_sync_at: String = ""
+## Failles mises de côté (signet), indépendant des favoris logiciels.
+var saved_ids: Array = []
+## Filtres personnalisés enregistrés par l'utilisateur.
+var filter_presets: Array = []
+var _sync_timer: Timer
 
 var auth: AuthClient
 
@@ -39,7 +44,18 @@ var _loading := false
 func _ready() -> void:
 	auth = AuthClient.new()
 	auth.name = "AuthClient"
-	auth.state_changed.connect(func() -> void: auth_changed.emit())
+	auth.state_changed.connect(_on_auth_state)
+
+	# Synchronisation automatique en arrière-plan (silencieuse).
+	_sync_timer = Timer.new()
+	_sync_timer.name = "AutoSyncTimer"
+	_sync_timer.wait_time = 300.0
+	_sync_timer.autostart = true
+	_sync_timer.timeout.connect(_auto_sync)
+	add_child(_sync_timer)
+
+	# Notifications réelles du téléphone (sans effet sur ordinateur).
+	NotificationService.setup(self)
 	add_child(auth)
 
 	_nvd_provider = NvdProvider.new()
@@ -72,6 +88,20 @@ func set_notifications(value: bool) -> void:
 
 func is_loading() -> bool:
 	return _loading
+
+## Dernier compte utilisé (mémorisé localement, jamais le mot de passe).
+func last_email() -> String:
+	return str(settings.get("last_email", ""))
+
+func last_display_name() -> String:
+	return str(settings.get("last_display_name", ""))
+
+func _on_auth_state() -> void:
+	if auth.is_signed_in():
+		settings["last_email"] = auth.email()
+		settings["last_display_name"] = auth.display_name()
+		save_data()
+	auth_changed.emit()
 
 func is_reduce_transparency() -> bool:
 	return bool(settings.get("reduce_transparency", false))
@@ -151,6 +181,12 @@ func load_local() -> void:
 				var sw: Variant = d.get("software", null)
 				if typeof(sw) == TYPE_ARRAY:
 					software = sw
+				var sv: Variant = d.get("saved", null)
+				if typeof(sv) == TYPE_ARRAY:
+					saved_ids = sv
+				var ps: Variant = d.get("presets", null)
+				if typeof(ps) == TYPE_ARRAY:
+					filter_presets = ps
 			elif txt.strip_edges() != "":
 				push_warning("FaillesCheck : sauvegarde illisible, état conservé.")
 	_ensure_client_id()
@@ -170,6 +206,8 @@ func _write_file() -> void:
 		"version": SAVE_VERSION,
 		"settings": settings,
 		"software": software,
+		"saved": saved_ids,
+		"presets": filter_presets,
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f != null:
@@ -179,18 +217,6 @@ func _write_file() -> void:
 func save_data() -> void:
 	_write_file()
 	data_changed.emit()
-
-func reset_all() -> void:
-	var cid := client_id()
-	settings = DEFAULT_SETTINGS.duplicate(true)
-	settings["client_id"] = cid
-	software = []
-	selected_id = ""
-	last_sync_at = ""
-	VulnCache.clear()
-	rebuild()
-	save_data()
-	toast.emit("Données réinitialisées")
 
 # --- Sources de données ----------------------------------------------------
 ## Catalogue = uniquement les données réelles récupérées (cache local).
@@ -233,15 +259,50 @@ func _on_nvd_completed(results: Array, meta: Dictionary) -> void:
 	_set_loading(false)
 	var ok := bool(meta.get("ok", false))
 	if ok and not results.is_empty():
+		# Nouvelles failles critiques touchant vos logiciels : vraie notification.
+		var alerts := _new_alerts(results)
 		VulnCache.merge(results)
 		rebuild()
 		data_changed.emit()
+		_notify_alerts(alerts)
 	var message := ""
 	if ok:
 		message = "%d vulnérabilité(s) récupérée(s)." % results.size()
 	else:
 		message = str(meta.get("error", "Erreur de récupération."))
 	fetch_finished.emit(ok, message, str(meta.get("source", "")))
+
+## Failles critiques inédites concernant un logiciel suivi.
+func _new_alerts(results: Array) -> Array:
+	var out: Array = []
+	for v in results:
+		if typeof(v) != TYPE_DICTIONARY:
+			continue
+		if str(v.get("severity", "")) != "critique":
+			continue
+		var id := str(v.get("id", ""))
+		if id == "" or not get_vulnerability(id).is_empty():
+			continue
+		var prod := str(v.get("product", "")).strip_edges().to_lower()
+		if prod == "":
+			continue
+		for s in software:
+			if typeof(s) != TYPE_DICTIONARY:
+				continue
+			var n := str(s.get("name", "")).strip_edges().to_lower()
+			if n != "" and (prod == n or prod.contains(n) or n.contains(prod)):
+				out.append(v)
+				break
+	return out
+
+func _notify_alerts(alerts: Array) -> void:
+	if alerts.is_empty() or not notifications_enabled():
+		return
+	var first: Dictionary = alerts[0]
+	var title := "%d nouvelle(s) faille(s) critique(s)" % alerts.size()
+	var body := "%s — %s" % [str(first.get("product", "")), str(first.get("title", ""))]
+	NotificationService.notify(title, body)
+	toast.emit(title)
 
 func cancel_online() -> void:
 	_nvd_provider.cancel()
@@ -348,6 +409,73 @@ func _find_software_by_identifier(identifier: String) -> Variant:
 			return s
 	return null
 
+# --- Signets (failles mises de côté) ---------------------------------------
+func is_saved(id: String) -> bool:
+	return saved_ids.has(id)
+
+func toggle_saved(id: String) -> void:
+	if id == "":
+		return
+	if saved_ids.has(id):
+		saved_ids.erase(id)
+		toast.emit("Retiré des enregistrements")
+	else:
+		saved_ids.append(id)
+		toast.emit("Faille enregistrée")
+	save_data()
+
+func saved_count() -> int:
+	return saved_ids.size()
+
+# --- Filtres personnalisés --------------------------------------------------
+func save_filter_preset(preset_label: String, filters: Dictionary) -> void:
+	var n := preset_label.strip_edges()
+	if n == "":
+		toast.emit("Donnez un nom au filtre")
+		return
+	for p in filter_presets:
+		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")).to_lower() == n.to_lower():
+			p["filters"] = filters.duplicate(true)
+			save_data()
+			toast.emit("Filtre mis à jour")
+			return
+	filter_presets.append({"name": n, "filters": filters.duplicate(true)})
+	save_data()
+	toast.emit("Filtre enregistré")
+
+func delete_filter_preset(preset_label: String) -> void:
+	var kept: Array = []
+	for p in filter_presets:
+		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")) == preset_label:
+			continue
+		kept.append(p)
+	filter_presets = kept
+	save_data()
+	toast.emit("Filtre supprimé")
+
+# --- Notes personnelles ----------------------------------------------------
+func note_for(id: String) -> String:
+	for s in software:
+		if typeof(s) == TYPE_DICTIONARY and str(s.get("id", "")) == id:
+			return str(s.get("note", ""))
+	return ""
+
+func set_note(id: String, text: String) -> void:
+	for s in software:
+		if typeof(s) == TYPE_DICTIONARY and str(s.get("id", "")) == id:
+			s["note"] = text.strip_edges()
+			save_data()
+			toast.emit("Note enregistrée")
+			return
+
+# --- Synchronisation automatique -------------------------------------------
+func _auto_sync() -> void:
+	if not SyncProvider.is_configured() or not auth.is_signed_in():
+		return
+	if _loading:
+		return
+	await sync_now()
+
 # --- Favoris & statistiques (données réelles uniquement) -------------------
 func is_favorite(id: String) -> bool:
 	for s in software:
@@ -431,6 +559,9 @@ func add_software(app_name: String, version: String, editor: String, identifier:
 	save_data()
 	toast.emit("Logiciel ajouté")
 	_push_remote(item)
+	# Récupération des vulnérabilités réelles de ce logiciel (NVD).
+	if is_online():
+		search_online(n)
 	return ""
 
 func remove_software(id: String) -> void:

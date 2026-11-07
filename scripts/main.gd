@@ -18,13 +18,13 @@ var _filter_sheet: FilterSheet
 var _confirm_sheet: ConfirmSheet
 var _account_sheet: AccountSheet
 var _transition: Tween
+var _login_prompted := false
 var _loader: AppLoader
 var _loading_layer: Control
 var _loading_bar: ProgressBar
 var _loading_status: Label
 var _loading_percent: Label
 var _loading_error: Label
-var _loading_actions: HBoxContainer
 var _loading_spinner: Spinner
 var _toast_panel: PanelContainer
 var _toast: Label
@@ -49,7 +49,7 @@ func _ready() -> void:
 		{"title": "Accueil", "short": "Accueil", "icon": UI.ICON_HOME, "page": HomePage},
 		{"title": "Recherche", "short": "Recherche", "icon": UI.ICON_SEARCH, "page": SearchPage},
 		{"title": "Mes logiciels", "short": "Logiciels", "icon": UI.ICON_APPS, "page": SoftwarePage},
-		{"title": "Réglages", "short": "Réglages", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
+		{"title": "Paramètres", "short": "Paramètres", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
 	]
 	_build_background()
 	_build_pages()
@@ -198,6 +198,8 @@ func _on_accessibility_changed() -> void:
 func _close_all_sheets() -> void:
 	if _confirm_sheet != null and _confirm_sheet.is_open():
 		_confirm_sheet.close()
+	if _account_sheet != null and _account_sheet.is_open():
+		_account_sheet.close()
 	if _filter_sheet != null and _filter_sheet.is_open():
 		_filter_sheet.close()
 	if _software_sheet != null and _software_sheet.is_open():
@@ -251,7 +253,7 @@ func _build_sheet() -> void:
 
 	_confirm_sheet = ConfirmSheet.new()
 	_confirm_sheet.name = "ConfirmSheet"
-	_confirm_sheet.z_index = Z_SHEET + 1
+	_confirm_sheet.z_index = Z_SHEET + 5
 	add_child(_confirm_sheet)
 
 	_account_sheet = AccountSheet.new()
@@ -295,14 +297,14 @@ func confirm_delete_software(id: String) -> void:
 			if _software_sheet.is_open():
 				_software_sheet.close())
 
-func open_filter_sheet(severities: Array, software_ids: Array) -> void:
+func open_filter_sheet(filters: Dictionary) -> void:
 	_close_keyboard()
-	_filter_sheet.open_with(severities, software_ids)
+	_filter_sheet.open_with(filters)
 
-func _on_filters_applied(severities: Array, software_ids: Array) -> void:
+func _on_filters_applied(filters: Dictionary) -> void:
 	for p in _pages:
 		if p is SearchPage:
-			(p as SearchPage).apply_filters(severities, software_ids)
+			(p as SearchPage).apply_filters(filters)
 			return
 
 ## Ouverture du détail par-dessus l'écran courant (Accueil ou Recherche).
@@ -442,20 +444,6 @@ func _build_loading() -> void:
 	_loading_error.visible = false
 	v.add_child(_loading_error)
 
-	_loading_actions = UI.hbox(10)
-	_loading_actions.visible = false
-	var retry := UI.primary_button("Réessayer")
-	retry.name = "RetryButton"
-	retry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	retry.pressed.connect(_on_retry)
-	_loading_actions.add_child(retry)
-	var offline := UI.ghost_button("Continuer hors ligne", UI.TEXT_2)
-	offline.name = "OfflineButton"
-	offline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	offline.pressed.connect(_on_continue_offline)
-	_loading_actions.add_child(offline)
-	v.add_child(_loading_actions)
-
 func _start_loading() -> void:
 	_pages_layer.modulate.a = 0.0
 	_nav_layer.modulate.a = 0.0
@@ -464,10 +452,8 @@ func _start_loading() -> void:
 		_loader.name = "AppLoader"
 		add_child(_loader)
 		_loader.progress_changed.connect(_on_progress)
-		_loader.failed.connect(_on_load_failed)
 		_loader.completed.connect(_on_load_completed)
 	_loading_error.visible = false
-	_loading_actions.visible = false
 	_loading_spinner.visible = true
 	_loading_bar.value = 0.0
 	_loading_percent.text = "0 %"
@@ -477,14 +463,6 @@ func _on_progress(ratio: float, label: String) -> void:
 	_loading_bar.value = ratio * 100.0
 	_loading_percent.text = "%d %%" % int(round(ratio * 100.0))
 	_loading_status.text = label
-
-func _on_load_failed(message: String) -> void:
-	_loading_spinner.visible = false
-	_loading_status.text = "Chargement incomplet"
-	_loading_error.text = message
-	_loading_error.add_theme_color_override("font_color", UI.DANGER)
-	_loading_error.visible = true
-	_loading_actions.visible = true
 
 func _on_load_completed(with_warnings: bool, summary: String) -> void:
 	if with_warnings:
@@ -497,6 +475,17 @@ func _on_load_completed(with_warnings: bool, summary: String) -> void:
 	_loading_spinner.visible = false
 	await get_tree().create_timer(0.45).timeout
 	_hide_loading()
+	_refresh_in_background()
+	_maybe_ask_login()
+
+## Mise à jour réelle en arrière-plan : l'interface est déjà utilisable.
+func _refresh_in_background() -> void:
+	if not DataStore.is_online():
+		return
+	await get_tree().create_timer(0.8).timeout
+	if DataStore.is_loading():
+		return
+	DataStore.search_online("")
 
 func _hide_loading() -> void:
 	# L'interface est déjà prête : on ne capture plus aucun appui pendant le fondu.
@@ -510,21 +499,18 @@ func _hide_loading() -> void:
 		_loading_layer.queue_free()
 		_pages_layer.modulate = Color(1, 1, 1, 1))
 
-func _on_retry() -> void:
-	_set_loading_actions_visible(false)
-	_loading_error.visible = false
-	_loading_spinner.visible = true
-	_loading_status.text = "Nouvelle tentative…"
-	_loading_bar.value = 0.0
-	_loading_percent.text = "0 %"
-	_loader.run()
-
-func _on_continue_offline() -> void:
-	_set_loading_actions_visible(false)
-	_loader.continue_offline()
-
-func _set_loading_actions_visible(v: bool) -> void:
-	_loading_actions.visible = v
+## Après le chargement : propose de se connecter si ce n'est pas déjà fait.
+func _maybe_ask_login() -> void:
+	if _login_prompted:
+		return
+	if not DataStore.auth.is_configured():
+		return
+	if DataStore.auth.is_signed_in():
+		return
+	_login_prompted = true
+	await get_tree().create_timer(0.7).timeout
+	if not DataStore.auth.is_signed_in():
+		open_account_sheet()
 
 # --- Notifications ---------------------------------------------------------
 ## Couche dédiée (z_index le plus élevé) : aucune barre, carte ou panneau
@@ -575,8 +561,8 @@ func _apply_toast_style() -> void:
 func _show_toast(message: String) -> void:
 	if _toast == null:
 		return
-	if not DataStore.notifications_enabled():
-		return
+	# Les retours d'action (enregistré, cache vidé…) restent toujours visibles :
+	# la préférence « Notifications » ne concerne que les alertes de failles.
 	_toast.text = message
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()
@@ -588,4 +574,6 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
+
+
 

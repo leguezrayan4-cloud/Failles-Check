@@ -45,6 +45,10 @@ const ICON_SOFTWARE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 
 const ICON_HEART := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" d=\"M12 20.6 4.9 14.2C2.6 12.1 2.2 8.9 4 7.1c1.9-1.9 4.9-1.6 6.6.4l1.4 1.6 1.4-1.6c1.7-2 4.7-2.3 6.6-.4 1.8 1.8 1.4 5-.9 7.1z\"/></svg>"
 const ICON_HEART_OUTLINE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linejoin=\"round\" d=\"M12 20.6 4.9 14.2C2.6 12.1 2.2 8.9 4 7.1c1.9-1.9 4.9-1.6 6.6.4l1.4 1.6 1.4-1.6c1.7-2 4.7-2.3 6.6-.4 1.8 1.8 1.4 5-.9 7.1z\"/></svg>"
 const ICON_FILTER := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M3.5 6.5h17M6.5 12h11M10 17.5h4\"/></g></svg>"
+const ICON_BOOKMARK := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#fff\" d=\"M6.5 3h11a1.5 1.5 0 0 1 1.5 1.5V21l-7-4.2L5 21V4.5A1.5 1.5 0 0 1 6.5 3z\"/></svg>"
+const ICON_BOOKMARK_OUTLINE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linejoin=\"round\" d=\"M6.5 3.9h11a.6.6 0 0 1 .6.6v15.1l-6.1-3.7-6.1 3.7V4.5a.6.6 0 0 1 .6-.6z\"/></svg>"
+const ICON_SHARE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3.5v11\"/><path d=\"M8 7.5 12 3.5l4 4\"/><path d=\"M5 13v6.5h14V13\"/></g></svg>"
+const ICON_CLOSE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\"><path d=\"M6.5 6.5l11 11M17.5 6.5l-11 11\"/></g></svg>"
 
 static var _font_reg: SystemFont
 static var _font_bold: SystemFont
@@ -328,6 +332,27 @@ static func back_icon_button(size: int = 40) -> Button:
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	return b
 
+## Bouton de fermeture rond (croix centrée), contour fin et état appuyé.
+static func close_button(size: int = 40) -> Button:
+	var b := Button.new()
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
+	b.custom_minimum_size = Vector2(size, size)
+	b.focus_mode = Control.FOCUS_NONE
+	b.icon = svg_texture(ICON_CLOSE, 16)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.add_theme_color_override("icon_normal_color", TEXT_2)
+	b.add_theme_color_override("icon_hover_color", TEXT)
+	b.add_theme_color_override("icon_pressed_color", TEXT)
+	b.add_theme_color_override("icon_disabled_color", TEXT_3)
+	var edge := BORDER_STRONG if transparency_reduced else BORDER
+	b.add_theme_stylebox_override("normal", stylebox(CARD_SOFT, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("hover", stylebox(BORDER, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("pressed", stylebox(BORDER_STRONG, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("disabled", stylebox(CARD_SOFT, 13, 1, edge, 0))
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	return b
+
 ## Bouton-icône rond à contour fin (style iOS) : normal, appuyé, désactivé.
 static func icon_button(svg: String, size: int = 40, color: Color = DANGER, bg: Color = Color(0.988, 0.937, 0.937)) -> TapCard:
 	var b := TapCard.new()
@@ -457,20 +482,6 @@ static func section_title(text: String) -> Label:
 	var l := label(text, 17, TEXT, true)
 	return l
 
-static func demo_tag() -> PanelContainer:
-	var p := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(ACCENT_2.r, ACCENT_2.g, ACCENT_2.b, 0.22 if transparency_reduced else 0.12)
-	sb.set_corner_radius_all(8)
-	sb.content_margin_left = 8
-	sb.content_margin_right = 8
-	sb.content_margin_top = 3
-	sb.content_margin_bottom = 3
-	p.add_theme_stylebox_override("panel", sb)
-	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	p.add_child(label("DÉMO · FICTIF", 11, ACCENT_2, true))
-	return p
-
 static func empty_state(title: String, message: String, svg: String = ICON_SHIELD) -> PanelContainer:
 	var p := card(26)
 	var v := vbox(12)
@@ -561,3 +572,72 @@ static func sev_dot(color: Color, size: int = 10) -> PanelContainer:
 	p.add_theme_stylebox_override("panel", sb)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return p
+# --- Squelettes de chargement ----------------------------------------------
+## Barre grise arrondie : occupe la place d'un texte pendant le chargement.
+static func skeleton_bar(width: float, height: float = 12.0) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.custom_minimum_size = Vector2(width, height)
+	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.878, 0.894, 0.925)
+	sb.set_corner_radius_all(int(height / 2.0))
+	sb.set_content_margin_all(0)
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return p
+
+## Carte squelette d'une faille : même gabarit qu'une vraie carte, sans données.
+static func skeleton_vuln_card() -> PanelContainer:
+	var p := card(14)
+	var row := hbox(12)
+	var bar := PanelContainer.new()
+	bar.custom_minimum_size = Vector2(5, 46)
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = Color(0.878, 0.894, 0.925)
+	bs.set_corner_radius_all(3)
+	bs.set_content_margin_all(0)
+	bar.add_theme_stylebox_override("panel", bs)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(bar)
+	var mid := vbox(8)
+	mid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mid.add_child(skeleton_bar(190, 13))
+	mid.add_child(skeleton_bar(120, 11))
+	row.add_child(mid)
+	var right := vbox(6)
+	right.size_flags_horizontal = Control.SIZE_SHRINK_END
+	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	right.add_child(skeleton_bar(34, 16))
+	right.add_child(skeleton_bar(46, 10))
+	row.add_child(right)
+	p.add_child(row)
+	return p
+
+## Carte squelette d'un logiciel suivi.
+static func skeleton_software_card() -> PanelContainer:
+	var p := card(12)
+	var row := hbox(12)
+	var ic := PanelContainer.new()
+	ic.custom_minimum_size = Vector2(24, 24)
+	var isb := StyleBoxFlat.new()
+	isb.bg_color = Color(0.878, 0.894, 0.925)
+	isb.set_corner_radius_all(6)
+	isb.set_content_margin_all(0)
+	ic.add_theme_stylebox_override("panel", isb)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(ic)
+	var v := vbox(7)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	v.add_child(skeleton_bar(140, 13))
+	v.add_child(skeleton_bar(90, 10))
+	row.add_child(v)
+	p.add_child(row)
+	return p
+
+## Bloc squelette générique (n cartes) pour une liste en cours de chargement.
+static func skeleton_list(count: int, software: bool = false) -> VBoxContainer:
+	var v := vbox(10)
+	for i in count:
+		v.add_child(skeleton_software_card() if software else skeleton_vuln_card())
+	return v

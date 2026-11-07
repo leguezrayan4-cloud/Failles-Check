@@ -6,7 +6,6 @@ extends Node
 ## tout se déroule entre deux images (await process_frame).
 
 signal progress_changed(ratio: float, label: String)
-signal failed(message: String)
 signal completed(with_warnings: bool, summary: String)
 
 var _running := false
@@ -34,20 +33,14 @@ func run() -> void:
 	DataStore.refresh_from_cache()
 	await _next_frame()
 
+	# La mise à jour réseau ne bloque jamais le démarrage : l'application
+	# s'ouvre sur le cache local, la source réelle se rafraîchit ensuite.
 	if DataStore.is_online():
-		progress_changed.emit(0.38, "Connexion…")
+		progress_changed.emit(0.60, "Connexion…")
 		await _next_frame()
-		progress_changed.emit(0.52, "Téléchargement…")
-		var res: Dictionary = await DataStore.fetch_vulnerabilities_async("")
-		if not bool(res.get("ok", false)):
-			_running = false
-			failed.emit(str(res.get("error", "Le chargement distant a échoué.")))
-			return
-		progress_changed.emit(0.78, "Analyse…")
-		await _next_frame()
-		progress_changed.emit(0.86, "%d vulnérabilités" % int(res.get("count", 0)))
+		progress_changed.emit(0.72, "Mise à jour en arrière-plan…")
 	else:
-		progress_changed.emit(0.78, "Mode hors ligne")
+		progress_changed.emit(0.72, "Mode hors ligne")
 	await _next_frame()
 
 	if SyncProvider.is_configured() and DataStore.auth.is_signed_in():
@@ -66,15 +59,6 @@ func run() -> void:
 	progress_changed.emit(1.0, "Terminé")
 	_running = false
 	completed.emit(_warnings.size() > 0, summary())
-
-## Poursuit sans la source distante (l'utilisateur a choisi le mode hors ligne).
-func continue_offline() -> void:
-	if _running:
-		return
-	if DataStore.is_online():
-		DataStore.set_online(false)
-	progress_changed.emit(1.0, "Hors ligne")
-	completed.emit(true, summary())
 
 func summary() -> String:
 	if _warnings.is_empty():

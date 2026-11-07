@@ -1,20 +1,22 @@
 class_name SearchPage
 extends AppPage
-## Onglet Recherche — catalogue filtrable par gravité et par texte.
+## Onglet Recherche — catalogue réel, filtres multiples via un seul bouton.
 
 var _query: String = ""
-var _filter: String = "all"
+var _severities: Array = []
+var _software_ids: Array = []
 var _error: String = ""
 var _status: String = ""
 var _count_label: Label
 var _results_box: VBoxContainer
 var _online_button: Button
+var _filter_button: Button
 
 func page_title() -> String:
 	return "Recherche"
 
 func page_subtitle() -> String:
-	return "Explorer le catalogue de failles"
+	return "Catalogue de failles"
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -28,27 +30,18 @@ func refresh() -> void:
 	var field := UI.line_edit("Rechercher une faille…")
 	field.name = "SearchField"
 	field.text = _query
+	field.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
 	field.text_changed.connect(_on_text)
+	field.text_submitted.connect(_on_submitted)
 	content.add_child(field)
 
 	content.add_child(_build_online_row())
+	content.add_child(_build_filter_row())
 
 	if _error != "":
 		content.add_child(UI.label(_error, 12, UI.DANGER, false, true))
-	# Le message de récupération distante n'a plus de sens en mode démonstration.
-	if _status != "" and not DataStore.is_demo():
+	if _status != "":
 		content.add_child(UI.label(_status, 12, UI.TEXT_2, false, true))
-
-	var chips := HFlowContainer.new()
-	chips.add_theme_constant_override("h_separation", 8)
-	chips.add_theme_constant_override("v_separation", 8)
-	chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var defs := [["all", "Tous"], ["critique", "Critique"], ["elevee", "Élevée"], ["moyenne", "Moyenne"], ["faible", "Faible"]]
-	for d in defs:
-		var c := UI.chip(str(d[1]), _filter == str(d[0]))
-		c.tapped.connect(_set_filter.bind(str(d[0])))
-		chips.add_child(c)
-	content.add_child(chips)
 
 	_count_label = UI.label("", 13, UI.TEXT_2)
 	content.add_child(_count_label)
@@ -57,15 +50,22 @@ func refresh() -> void:
 	content.add_child(_results_box)
 	_apply()
 
-## Bloc de recherche en ligne : bouton + aide contextuelle.
-func _build_online_row() -> Control:
-	if DataStore.is_demo():
-		return UI.label("Mode démonstration (DÉMO · FICTIF)", 12, UI.TEXT_2, false, true)
+## Validation au clavier : ferme le clavier et applique la recherche.
+func _on_submitted(_text: String) -> void:
+	_close_keyboard()
+	_apply()
 
+func _close_keyboard() -> void:
+	var vp := get_viewport()
+	if vp != null:
+		vp.gui_release_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_hide()
+
+func _build_online_row() -> Control:
 	var box := UI.vbox(6)
 	_online_button = UI.ghost_icon_button(UI.ICON_GLOBE, "Rechercher en ligne (NVD)", UI.ACCENT)
 	_online_button.name = "OnlineButton"
-	# Bouton désactivé (état grisé) si la source en ligne est coupée ou occupée.
 	_online_button.disabled = DataStore.is_loading() or not DataStore.is_online()
 	if DataStore.is_loading():
 		_online_button.text = "Recherche en ligne…"
@@ -74,6 +74,43 @@ func _build_online_row() -> Control:
 	if not DataStore.is_online():
 		box.add_child(UI.label("Source en ligne désactivée", 12, UI.TEXT_2, false, true))
 	return box
+
+## Un seul bouton « Filtrer » + résumé court des filtres actifs.
+func _build_filter_row() -> Control:
+	var row := UI.hbox(10)
+	_filter_button = UI.ghost_icon_button(UI.ICON_FILTER, "Filtrer", UI.TEXT)
+	_filter_button.name = "FilterButton"
+	_filter_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_filter_button.pressed.connect(_on_filter_pressed)
+	row.add_child(_filter_button)
+	var summary := UI.label(_filter_summary(), 12, UI.TEXT_2, false, true)
+	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(summary)
+	return row
+
+func _filter_summary() -> String:
+	var parts: Array = []
+	for k in _severities:
+		parts.append(UI.sev_label(str(k)))
+	if not _software_ids.is_empty():
+		parts.append("%d logiciel(s)" % _software_ids.size())
+	if parts.is_empty():
+		return "Aucun filtre"
+	return " · ".join(parts)
+
+func _on_filter_pressed() -> void:
+	_close_keyboard()
+	var main := get_tree().current_scene
+	if main != null and main.has_method("open_filter_sheet"):
+		main.open_filter_sheet(_severities, _software_ids)
+
+## Appelé par le panneau de filtres.
+func apply_filters(severities: Array, software_ids: Array) -> void:
+	_severities = severities.duplicate()
+	_software_ids = software_ids.duplicate()
+	refresh()
 
 func _on_online() -> void:
 	_error = ""
@@ -97,10 +134,6 @@ func _on_text(t: String) -> void:
 	_query = t
 	_apply()
 
-func _set_filter(k: String) -> void:
-	_filter = k
-	refresh()
-
 func _apply() -> void:
 	if _results_box == null:
 		return
@@ -112,21 +145,19 @@ func _apply() -> void:
 		if _count_label != null:
 			_count_label.text = ""
 		_results_box.add_child(UI.empty_state(
-			"Aucune donnée",
-			"Activez une source dans Réglages.", UI.ICON_SEARCH))
+			"Aucune donnée disponible",
+			"Lancez une recherche en ligne pour récupérer les données réelles.", UI.ICON_SEARCH))
 		return
 
 	var list := _filtered()
-	_count_label.text = "%d faille%s trouvée%s" % [list.size(), "" if list.size() == 1 else "s", "" if list.size() == 1 else "s"]
+	_count_label.text = "%d faille%s" % [list.size(), "" if list.size() == 1 else "s"]
 
 	if list.is_empty():
 		_results_box.add_child(UI.empty_state("Aucun résultat",
 			"Modifiez le filtre ou le terme recherché.", UI.ICON_SEARCH))
 		return
 
-	if DataStore.is_demo():
-		_results_box.add_child(UI.demo_tag())
-	elif DataStore.has_real_data():
+	if DataStore.has_real_data():
 		_results_box.add_child(UI.badge("Source : NVD (NIST)", UI.ACCENT))
 
 	for v in list:
@@ -135,10 +166,24 @@ func _apply() -> void:
 
 func _filtered() -> Array:
 	var q := _query.strip_edges().to_lower()
+	var names: Array = []
+	for id in _software_ids:
+		for s in DataStore.software:
+			if str(s.get("id", "")) == str(id):
+				names.append(str(s.get("name", "")).to_lower())
 	var out: Array = []
 	for v in DataStore.vulnerabilities:
-		if _filter != "all" and str(v.get("severity", "")) != _filter:
+		if not _severities.is_empty() and not _severities.has(str(v.get("severity", ""))):
 			continue
+		if not names.is_empty():
+			var prod := str(v.get("product", "")).to_lower()
+			var matched := false
+			for n in names:
+				if n != "" and (prod == n or prod.contains(n) or n.contains(prod)):
+					matched = true
+					break
+			if not matched:
+				continue
 		if q != "":
 			var hay := "%s %s %s %s" % [str(v.get("title", "")), str(v.get("product", "")), str(v.get("id", "")), str(v.get("summary", ""))]
 			if not hay.to_lower().contains(q):

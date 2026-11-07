@@ -30,9 +30,7 @@ func refresh() -> void:
 		var head := UI.hbox(8)
 		head.add_child(UI.section_title("Failles prioritaires"))
 		head.add_child(UI.spacer())
-		if DataStore.is_demo():
-			head.add_child(UI.demo_tag())
-		elif DataStore.has_real_data():
+		if DataStore.has_real_data():
 			head.add_child(UI.badge("NVD (NIST)", UI.ACCENT))
 		content.add_child(head)
 		for v in DataStore.vulnerabilities.slice(0, 4):

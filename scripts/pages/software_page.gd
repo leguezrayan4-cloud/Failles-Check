@@ -1,10 +1,6 @@
 class_name SoftwarePage
 extends AppPage
-## Mes logiciels — recherche assistée.
-## On tape seulement le nom : des suggestions apparaissent pendant la saisie
-## (liste locale hors ligne, complétée par le dictionnaire CPE public du NVD).
-## Choisir une suggestion remplit automatiquement éditeur, version et
-## identifiant. L'ajout manuel reste possible. Doublons refusés.
+## Mes logiciels — recherche assistée, favoris, détails et statistiques réelles.
 
 const DEBOUNCE := 0.35
 
@@ -12,6 +8,7 @@ var _query: String = ""
 var _error: String = ""
 var _status: String = ""
 var _suggestions: Array = []
+var _only_favorites := false
 var _field: LineEdit
 var _status_label: Label
 var _sugg_box: VBoxContainer
@@ -22,7 +19,7 @@ func page_title() -> String:
 	return "Mes logiciels"
 
 func page_subtitle() -> String:
-	return "Rechercher un logiciel à suivre"
+	return "Logiciels suivis"
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
@@ -43,7 +40,9 @@ func refresh() -> void:
 	_field = UI.line_edit("Nom du logiciel")
 	_field.name = "SoftwareSearchField"
 	_field.text = _query
+	_field.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_DEFAULT
 	_field.text_changed.connect(_on_text_changed)
+	_field.text_submitted.connect(_on_submitted)
 	content.add_child(_field)
 
 	if _error != "":
@@ -76,6 +75,21 @@ func _on_text_changed(t: String) -> void:
 		if q.length() >= 2 and DataStore.is_online():
 			_debounce.start()
 
+## Validation au clavier (touche Entrée) : ajoute la première suggestion.
+func _on_submitted(_text: String) -> void:
+	_close_keyboard()
+	if not _suggestions.is_empty():
+		_add_from_suggestion(_suggestions[0])
+	elif _query.strip_edges() != "":
+		_add_manual()
+
+func _close_keyboard() -> void:
+	var vp := get_viewport()
+	if vp != null:
+		vp.gui_release_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_hide()
+
 func _request_remote() -> void:
 	var q := _query.strip_edges()
 	if q.length() < 2 or not DataStore.is_online():
@@ -103,7 +117,6 @@ func _on_remote_ready(query: String, items: Array) -> void:
 	_refresh_status_label()
 	_render_suggestions()
 
-## Message court, affiché seulement s'il apporte une information utile.
 func _recompute_status() -> void:
 	var q := _query.strip_edges()
 	if q == "":
@@ -168,8 +181,6 @@ func _suggestion_card(item: Dictionary) -> TapCard:
 	if sub != "":
 		mid.add_child(UI.label(sub, 12, UI.TEXT_2))
 	row.add_child(mid)
-	# Étiquette uniquement pour les résultats venus du NVD : le catalogue local
-	# est le fonctionnement normal, aucune mention superflue.
 	if str(item.get("source", "")) == "NVD":
 		row.add_child(UI.badge("NVD", UI.ACCENT))
 	UI.overlay(card, row, 14)
@@ -200,37 +211,91 @@ func _render_list() -> void:
 		_list.remove_child(c)
 		c.queue_free()
 
-	_list.add_child(UI.section_title("Logiciels (%d)" % DataStore.software.size()))
+	var seg := UI.hbox(8)
+	var all_chip := UI.chip("Tous", not _only_favorites)
+	all_chip.tapped.connect(_set_favorites_only.bind(false))
+	seg.add_child(all_chip)
+	var fav_chip := UI.chip("Favoris", _only_favorites)
+	fav_chip.tapped.connect(_set_favorites_only.bind(true))
+	seg.add_child(fav_chip)
+	seg.add_child(UI.spacer())
+	_list.add_child(seg)
 
-	if DataStore.software.is_empty():
+	var items: Array = DataStore.favorites() if _only_favorites else DataStore.software
+	_list.add_child(UI.section_title("Logiciels (%d)" % items.size()))
+
+	if items.is_empty():
 		_list.add_child(UI.empty_state("Aucun logiciel",
-			"Cherchez un nom puis touchez une suggestion.", UI.ICON_APPS))
+			"Cherchez un nom puis touchez une suggestion." if not _only_favorites else "Aucun favori pour le moment.",
+			UI.ICON_APPS))
 		return
 
-	for s in DataStore.software:
+	for s in items:
 		_list.add_child(_software_card(s))
 
-func _software_card(s: Dictionary) -> PanelContainer:
-	var p := UI.card(14)
-	var row := UI.hbox(12)
+func _set_favorites_only(value: bool) -> void:
+	_only_favorites = value
+	refresh()
+
+func _software_card(s: Dictionary) -> Control:
+	var id := str(s.get("id", ""))
+	var app_name := str(s.get("name", ""))
+	var vulns := DataStore.vulns_for_software(app_name)
+
+	var card := UI.card(12)
+	var row := UI.hbox(10)
+
+	# Zone « détails » : icône + textes (tactile, sans fond).
+	var details := UI.flat_tap()
+	details.custom_minimum_size = Vector2(0, 52)
+	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var inner := UI.hbox(12)
+	var ic := UI.icon(UI.ICON_SOFTWARE, 24, UI.ACCENT)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	inner.add_child(ic)
 	var v := UI.vbox(3)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	v.add_child(UI.label(str(s.get("name", "")), 15, UI.TEXT, true, true))
+	v.add_child(UI.label(app_name, 15, UI.TEXT, true, true))
 	var parts: Array = []
-	if str(s.get("version", "")) != "":
-		parts.append(str(s.get("version", "")))
 	if str(s.get("editor", "")) != "":
 		parts.append(str(s.get("editor", "")))
+	if str(s.get("version", "")) != "":
+		parts.append("v" + str(s.get("version", "")))
 	v.add_child(UI.label(" · ".join(parts) if not parts.is_empty() else "—", 12, UI.TEXT_2))
-	row.add_child(v)
-	# Icône vectorielle nette (rastérisée en 3×), contour fin et état appuyé.
-	var del := UI.icon_button(UI.ICON_TRASH, 42, UI.DANGER, Color(0.988, 0.937, 0.937))
+	v.add_child(UI.label("%d vulnérabilité(s)" % vulns.size(), 11, UI.TEXT_3))
+	inner.add_child(v)
+	UI.overlay(details, inner, 0)
+	details.tapped.connect(_open_details.bind(id))
+	row.add_child(details)
+
+	var fav_on := DataStore.is_favorite(id)
+	var heart := UI.icon_button(UI.ICON_HEART if fav_on else UI.ICON_HEART_OUTLINE, 38,
+		UI.DANGER if fav_on else UI.TEXT_3,
+		Color(0.988, 0.937, 0.937) if fav_on else UI.CARD_SOFT)
+	heart.name = "Fav_%s" % id
+	heart.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	heart.tapped.connect(_on_favorite.bind(id))
+	row.add_child(heart)
+
+	var del := UI.icon_button(UI.ICON_TRASH, 38, UI.DANGER, Color(0.988, 0.937, 0.937))
+	del.name = "Del_%s" % id
 	del.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	del.tapped.connect(_on_delete.bind(str(s.get("id", ""))))
+	del.tapped.connect(_on_delete.bind(id))
 	row.add_child(del)
-	p.add_child(row)
-	return p
+
+	card.add_child(row)
+	return card
+
+func _on_favorite(id: String) -> void:
+	DataStore.toggle_favorite(id)
+
+func _open_details(id: String) -> void:
+	var main := get_tree().current_scene
+	if main != null and main.has_method("open_software_sheet"):
+		main.open_software_sheet(id)
 
 func _on_delete(id: String) -> void:
-	DataStore.remove_software(id)
+	var main := get_tree().current_scene
+	if main != null and main.has_method("confirm_delete_software"):
+		main.confirm_delete_software(id)

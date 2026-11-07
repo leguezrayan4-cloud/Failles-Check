@@ -1,75 +1,87 @@
 class_name SettingsPage
 extends AppPage
-## Onglet Réglages — préférences, sources de données et synchronisation.
-
-var _status: String = ""
+## Onglet Réglages — compte, apparence, notifications, stockage, réinitialisation.
 
 func page_title() -> String:
 	return "Réglages"
 
 func page_subtitle() -> String:
-	return "Préférences de l'application"
+	return "Compte et préférences"
 
 func build() -> void:
 	DataStore.data_changed.connect(refresh)
+	DataStore.auth_changed.connect(refresh)
 	refresh()
 
 func refresh() -> void:
 	clear_content()
 
-	content.add_child(_switch_card("Données de démonstration",
-		"Catalogue fictif (DÉMO · FICTIF).",
-		DataStore.is_demo(), "DemoSwitch", _on_demo))
+	# --- Compte ---
+	content.add_child(UI.section_title("Compte"))
+	var signed_in := DataStore.auth.is_signed_in()
+	var account := UI.card(16)
+	var av := UI.vbox(6)
+	if signed_in:
+		var shown := DataStore.auth.display_name()
+		av.add_child(UI.label(shown if shown != "" else "Compte", 16, UI.TEXT, true, true))
+		av.add_child(UI.label(DataStore.auth.email(), 12, UI.TEXT_2, false, true))
+	else:
+		av.add_child(UI.label("Non connecté", 16, UI.TEXT, true))
+		av.add_child(UI.label("Connectez-vous pour retrouver vos logiciels.", 12, UI.TEXT_2, false, true))
+	account.add_child(av)
+	content.add_child(account)
 
-	content.add_child(_switch_card("Source en ligne (NVD)",
-		"Vulnérabilités réelles du NVD (NIST).",
-		DataStore.is_online(), "OnlineSwitch", _on_online))
+	var manage := UI.primary_button("Gérer le compte" if signed_in else "Se connecter")
+	manage.name = "AccountButton"
+	manage.pressed.connect(_on_account)
+	content.add_child(manage)
 
+	if signed_in:
+		var sync := UI.ghost_button("Synchroniser", UI.ACCENT)
+		sync.name = "SyncButton"
+		sync.pressed.connect(_on_sync)
+		content.add_child(sync)
+
+	# --- Apparence ---
+	content.add_child(UI.section_title("Apparence"))
 	content.add_child(_switch_card("Transparence réduite",
 		"Fonds opaques et contraste renforcé.",
 		DataStore.is_reduce_transparency(), "TransparencySwitch", _on_transparency))
 
+	# --- Notifications ---
+	content.add_child(UI.section_title("Notifications"))
+	content.add_child(_switch_card("Messages",
+		"Confirmations d'action et informations.",
+		DataStore.notifications_enabled(), "NotificationsSwitch", _on_notifications))
+
+	# --- Stockage local ---
+	content.add_child(UI.section_title("Stockage local"))
 	var info := DataStore.cache_info()
 	var updated := str(info.get("updated", ""))
 	if updated == "":
 		updated = "jamais"
 	content.add_child(UI.info_card([
-		["Source active", DataStore.source_label()],
-		["Entrées en cache", str(info.get("count", 0))],
+		["Vulnérabilités en cache", str(info.get("count", 0))],
 		["Dernière mise à jour", updated],
 	]))
-
-	if _status != "":
-		content.add_child(UI.label(_status, 12, UI.TEXT_2, false, true))
-
-	var clear := UI.ghost_button("Vider le cache local", UI.TEXT_2)
+	var clear := UI.ghost_button("Vider le cache", UI.TEXT_2)
+	clear.name = "ClearCacheButton"
 	clear.pressed.connect(_on_clear_cache)
 	content.add_child(clear)
 
-	# --- Synchronisation distante (Supabase) ---
-	content.add_child(UI.section_title("Synchronisation distante"))
-	var configured := DataStore.sync_configured()
-	content.add_child(UI.info_card([
-		["Service", "Supabase"],
-		["État", "configurée" if configured else "non configurée"],
-		["Dernière synchro", DataStore.last_sync_at if DataStore.last_sync_at != "" else "—"],
-	]))
-	if configured:
-		var sync := UI.primary_button("Synchroniser")
-		sync.name = "SyncButton"
-		sync.pressed.connect(_on_sync)
-		content.add_child(sync)
-	else:
-		content.add_child(UI.label("Configuration requise : docs/supabase_setup.md", 12, UI.TEXT_2, false, true))
-
-	content.add_child(UI.info_card([
-		["Version", "2.0.0"],
-		["Stockage", "Local (JSON)"],
-	]))
-
+	# --- Réinitialisation ---
+	content.add_child(UI.section_title("Réinitialisation"))
 	var reset := UI.ghost_button("Réinitialiser les données", UI.DANGER)
+	reset.name = "ResetButton"
 	reset.pressed.connect(_on_reset)
 	content.add_child(reset)
+
+	# --- Déconnexion ---
+	if signed_in:
+		var out := UI.ghost_button("Se déconnecter", UI.DANGER)
+		out.name = "SignOutButton"
+		out.pressed.connect(_on_sign_out)
+		content.add_child(out)
 
 func _switch_card(title: String, desc: String, on: bool, node_name: String, handler: Callable) -> PanelContainer:
 	var p := UI.card(16)
@@ -88,28 +100,29 @@ func _switch_card(title: String, desc: String, on: bool, node_name: String, hand
 	p.add_child(row)
 	return p
 
-func _on_demo(value: bool) -> void:
-	DataStore.set_demo(value)
+func _on_account() -> void:
+	var main := get_tree().current_scene
+	if main != null and main.has_method("open_account_sheet"):
+		main.open_account_sheet()
 
-func _on_online(value: bool) -> void:
-	DataStore.set_online(value)
+func _on_sync() -> void:
+	var res: Dictionary = await DataStore.sync_now()
+	if bool(res.get("ok", false)):
+		DataStore.toast.emit("Synchronisé")
+	else:
+		DataStore.toast.emit(str(res.get("error", "Synchronisation impossible.")))
 
 func _on_transparency(value: bool) -> void:
 	DataStore.set_reduce_transparency(value)
 
+func _on_notifications(value: bool) -> void:
+	DataStore.set_notifications(value)
+
 func _on_clear_cache() -> void:
 	DataStore.clear_cache()
 
-func _on_sync() -> void:
-	_status = "Synchronisation en cours…"
-	refresh()
-	var res: Dictionary = await DataStore.sync_now()
-	if bool(res.get("ok", false)):
-		_status = "Synchronisé : %d envoyé(s), %d récupéré(s)." % [int(res.get("pushed", 0)), int(res.get("merged", 0))]
-	else:
-		_status = str(res.get("error", "Échec de la synchronisation."))
-	refresh()
-
 func _on_reset() -> void:
 	DataStore.reset_all()
-	refresh()
+
+func _on_sign_out() -> void:
+	await DataStore.auth.sign_out()

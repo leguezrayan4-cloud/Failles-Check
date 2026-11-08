@@ -517,7 +517,7 @@ func _build_loading() -> void:
 	center.add_child(v)
 
 	var logo := TextureRect.new()
-	logo.texture = preload("res://Logo.png")
+	logo.texture = preload("res://Logo_Fond_Noir.png")
 	logo.custom_minimum_size = Vector2(120, 120)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -942,10 +942,3 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
-
-
-
-
-
-
-

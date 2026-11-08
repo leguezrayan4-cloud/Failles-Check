@@ -226,7 +226,66 @@ func _close_keyboard() -> void:
 		DisplayServer.virtual_keyboard_hide()
 
 ## Un appui en dehors du champ actif ferme le clavier (comme sur iOS).
+var _drag_scroll: ScrollContainer
+var _drag_last_y := 0.0
+
+## Défilement à la souris (ordinateur uniquement) — jamais au simple survol.
+func _mouse_scroll(event: InputEvent) -> void:
+	if OS.has_feature("mobile"):
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if not bool(DataStore.settings.get("scroll_wheel", true)):
+				get_viewport().set_input_as_handled()
+			return
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed and bool(DataStore.settings.get("scroll_drag", true)) and not _any_sheet_open():
+				_drag_scroll = _scroll_under(mb.global_position)
+				_drag_last_y = mb.global_position.y
+			else:
+				_drag_scroll = null
+	elif event is InputEventMouseMotion and _drag_scroll != null:
+		var mm := event as InputEventMouseMotion
+		if (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+			var dy := mm.global_position.y - _drag_last_y
+			if absf(dy) >= 1.0:
+				_drag_scroll.scroll_vertical -= int(dy)
+				_drag_last_y = mm.global_position.y
+
+func _any_sheet_open() -> bool:
+	for w in [_sheet, _software_sheet, _filter_sheet, _account_sheet, _share_sheet, _confirm_sheet]:
+		if w != null and w.has_method("is_open") and w.is_open():
+			return true
+	return false
+
+func _scroll_under(pos: Vector2) -> ScrollContainer:
+	var found: ScrollContainer = null
+	if _pages_layer == null:
+		return null
+	for p in _pages_layer.get_children():
+		if not (p is Control) or not (p as Control).visible:
+			continue
+		found = _find_scroll_node(p, pos)
+		if found != null:
+			return found
+	return null
+
+func _find_scroll_node(node: Node, pos: Vector2) -> ScrollContainer:
+	if node is ScrollContainer:
+		var sc := node as ScrollContainer
+		if sc.is_visible_in_tree() and sc.get_global_rect().has_point(pos):
+			return sc
+	for c in node.get_children():
+		if c is Control and not (c as Control).visible:
+			continue
+		var r := _find_scroll_node(c, pos)
+		if r != null:
+			return r
+	return null
+
 func _input(event: InputEvent) -> void:
+	_mouse_scroll(event)
 	var pos := Vector2.ZERO
 	var pressed := false
 	if event is InputEventScreenTouch:
@@ -336,10 +395,9 @@ func open_software_sheet(id: String) -> void:
 
 func _on_software_favorite(id: String) -> void:
 	DataStore.toggle_favorite(id)
-	for s in DataStore.software:
-		if str(s.get("id", "")) == id:
-			_software_sheet.show_software(s)
-			return
+	Haptics.tap()
+	# Le panneau reste ouvert : seule l'icône du cœur change.
+	_software_sheet.set_favorite_state(id, DataStore.is_favorite(id))
 
 ## Confirmation explicite avant toute suppression.
 func confirm_delete_software(id: String) -> void:
@@ -682,7 +740,25 @@ var _guide: GuideOverlay
 func _build_guide() -> void:
 	_guide = GuideOverlay.new()
 	_guide.name = "Guide"
+	_guide.finished.connect(_maybe_ask_notifications)
 	add_child(_guide)
+
+## Autorisation des notifications : demandée après une explication claire,
+## une seule fois, et jamais au milieu d'une action.
+func _maybe_ask_notifications() -> void:
+	if not NotificationService.available():
+		return
+	if NotificationService.has_permission():
+		return
+	if bool(DataStore.settings.get("notif_prompt_done", false)):
+		return
+	DataStore.settings["notif_prompt_done"] = true
+	DataStore.save_data()
+	_confirm_sheet.ask(
+		"Autoriser les notifications ?",
+		"FaillesCheck peut vous prévenir sur ce téléphone dès qu'une nouvelle faille critique concerne un de vos logiciels suivis. Vous pourrez changer d'avis dans Paramètres.",
+		"Autoriser",
+		func() -> void: NotificationService.request_permission())
 
 func show_guide() -> void:
 	if _guide != null:
@@ -690,6 +766,8 @@ func show_guide() -> void:
 
 func _maybe_show_guide() -> void:
 	if bool(DataStore.settings.get("guide_seen", false)):
+		await get_tree().create_timer(0.6).timeout
+		_maybe_ask_notifications()
 		return
 	await get_tree().create_timer(0.4).timeout
 	if _guide != null:
@@ -864,6 +942,7 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
+
 
 
 

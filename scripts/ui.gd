@@ -52,6 +52,7 @@ const ICON_CHEVRON := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 2
 const ICON_PERSON := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"8.5\" r=\"3.6\"/><path d=\"M4.8 20c.6-3.7 3.6-5.8 7.2-5.8s6.6 2.1 7.2 5.8\"/></g></svg>"
 const ICON_BELL := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6.5 10a5.5 5.5 0 0 1 11 0c0 4 1.4 5.6 1.4 5.6H5.1S6.5 14 6.5 10z\"/><path d=\"M10 18.5a2.2 2.2 0 0 0 4 0\"/></g></svg>"
 const ICON_DATABASE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"12\" cy=\"6.2\" rx=\"7\" ry=\"2.8\"/><path d=\"M5 6.2v5.6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6.2\"/><path d=\"M5 11.8v5.6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5.6\"/></g></svg>"
+const ICON_ARROW_UP := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M12 19.5V5M6 11l6-6 6 6\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
 const ICON_SHARE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3.5v11\"/><path d=\"M8 7.5 12 3.5l4 4\"/><path d=\"M5 13v6.5h14V13\"/></g></svg>"
 const ICON_CLOSE := "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><g fill=\"none\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\"><path d=\"M6.5 6.5l11 11M17.5 6.5l-11 11\"/></g></svg>"
 
@@ -328,6 +329,8 @@ static func back_icon_button(size: int = 40) -> Button:
 	b.custom_minimum_size = Vector2(size, size)
 	b.focus_mode = Control.FOCUS_NONE
 	b.icon = svg_texture(ICON_BACK, 18)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.add_theme_color_override("icon_normal_color", ACCENT)
 	b.add_theme_color_override("icon_hover_color", ACCENT)
 	b.add_theme_color_override("icon_pressed_color", ACCENT.darkened(0.18))

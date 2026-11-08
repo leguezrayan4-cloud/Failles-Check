@@ -34,7 +34,6 @@ var last_sync_at: String = ""
 ## Failles mises de côté (signet), indépendant des favoris logiciels.
 var saved_ids: Array = []
 var _sync_timer: Timer
-var _test_timer: Timer
 var _live_timer: Timer
 var _syncing := false
 ## Section IA : historique local et quota connu.
@@ -67,14 +66,6 @@ func _ready() -> void:
 
 	# Session précédente : on reste connecté au prochain lancement.
 	_restore_session()
-
-	# Notification de test (une par minute) pour vérifier le système.
-	_test_timer = Timer.new()
-	_test_timer.name = "TestNotificationTimer"
-	_test_timer.wait_time = 60.0
-	_test_timer.autostart = true
-	_test_timer.timeout.connect(_send_test_notification)
-	add_child(_test_timer)
 
 	# Actualisation en direct : un autre appareil du même compte.
 	_live_timer = Timer.new()
@@ -370,6 +361,42 @@ func _write_file() -> void:
 func save_data() -> void:
 	_write_file()
 	data_changed.emit()
+	_schedule_auto_sync()
+
+# --- Synchronisation automatique (déclenchée par chaque modification) ------
+var _auto_sync_timer: Timer
+var _auto_sync_retry := 0
+var _auto_sync_failing := false
+
+func _schedule_auto_sync() -> void:
+	if not SyncProvider.is_configured() or not auth.is_signed_in():
+		return
+	if _auto_sync_timer == null:
+		_auto_sync_timer = Timer.new()
+		_auto_sync_timer.one_shot = true
+		_auto_sync_timer.wait_time = 1.2
+		_auto_sync_timer.timeout.connect(_run_auto_sync)
+		add_child(_auto_sync_timer)
+	_auto_sync_timer.start()
+
+func _run_auto_sync() -> void:
+	if _syncing or not auth.is_signed_in():
+		return
+	var res: Dictionary = await sync_now()
+	if bool(res.get("ok", false)):
+		_auto_sync_retry = 0
+		# Échec prolongé seulement : l'utilisateur est prévenu.
+		if _auto_sync_failing:
+			_auto_sync_failing = false
+			toast.emit("Synchronisation rétablie")
+		return
+	_auto_sync_retry += 1
+	var delay := minf(120.0, 5.0 * float(_auto_sync_retry))
+	if _auto_sync_retry >= 4 and not _auto_sync_failing:
+		_auto_sync_failing = true
+		toast.emit("Synchronisation en attente, nouvelle tentative automatique")
+	var t := get_tree().create_timer(delay)
+	t.timeout.connect(_run_auto_sync)
 
 # --- Sources de données ----------------------------------------------------
 ## Catalogue = uniquement les données réelles récupérées (cache local).
@@ -399,9 +426,13 @@ func fetch_vulnerabilities_async(query: String) -> Dictionary:
 	return {"ok": true, "error": "", "count": results.size()}
 
 ## Déclenchement depuis l'interface (résultat diffusé par fetch_finished).
+var _last_query := ""
+var _retry_used := false
+
 func search_online(query: String) -> void:
 	if _loading:
 		return
+	_last_query = query
 	if not is_online():
 		fetch_finished.emit(false, "Source en ligne désactivée.", "")
 		return
@@ -418,11 +449,15 @@ func _on_nvd_completed(results: Array, meta: Dictionary) -> void:
 		rebuild()
 		data_changed.emit()
 		_notify_alerts(alerts)
+	_retry_used = ok
 	var message := ""
 	if ok:
 		message = "%d vulnérabilité(s) récupérée(s)." % results.size()
 	else:
 		message = str(meta.get("error", "Erreur de récupération."))
+		if not _retry_used and _last_query != "":
+			_retry_used = true
+			_retry_fetch()
 	fetch_finished.emit(ok, message, str(meta.get("source", "")))
 
 ## Failles critiques inédites concernant un logiciel suivi.
@@ -456,6 +491,14 @@ func _notify_alerts(alerts: Array) -> void:
 	var body := "%s — %s" % [str(first.get("product", "")), str(first.get("title", ""))]
 	NotificationService.notify(title, body)
 	toast.emit(title)
+
+## Un seul réessai automatique (source momentanément limitée).
+func _retry_fetch() -> void:
+	var q := _last_query
+	await get_tree().create_timer(20.0).timeout
+	if _loading or q == "":
+		return
+	search_online(q)
 
 func cancel_online() -> void:
 	_nvd_provider.cancel()
@@ -615,13 +658,6 @@ func _restore_session() -> void:
 	if auth.is_signed_in():
 		auth_changed.emit()
 		await sync_now()
-
-func _send_test_notification() -> void:
-	if not bool(settings.get("test_notifications", true)):
-		return
-	var now := Time.get_time_string_from_system()
-	NotificationService.notify("FaillesCheck — test", "Notification de test envoyée à %s." % now)
-	toast.emit("Notification de test envoyée (%s)" % now)
 
 ## Récupère l'état distant : un logiciel supprimé sur un autre appareil
 ## disparaît ici aussi, et les ajouts arrivent automatiquement.

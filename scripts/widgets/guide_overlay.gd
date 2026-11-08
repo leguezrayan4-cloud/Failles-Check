@@ -56,7 +56,7 @@ func _ready() -> void:
 	var icon_holder := CenterContainer.new()
 	icon_holder.custom_minimum_size = Vector2(0, 96)
 	var logo := TextureRect.new()
-	logo.texture = preload("res://Logo.png")
+	logo.texture = preload("res://Logo_Fond_Noir.png")
 	logo.custom_minimum_size = Vector2(88, 88)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED

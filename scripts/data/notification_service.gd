@@ -34,6 +34,17 @@ static func _on_initialized() -> void:
 	channel.set_importance(NotificationChannel.Importance.HIGH)
 	channel.set_badge_enabled(true)
 	_scheduler.create_notification_channel(channel)
+
+## L'autorisation système est-elle accordée ?
+static func has_permission() -> bool:
+	if _scheduler == null:
+		return false
+	return _scheduler.has_post_notifications_permission()
+
+## Demande l'autorisation (appelée après une explication claire).
+static func request_permission() -> void:
+	if _scheduler == null:
+		return
 	if not _scheduler.has_post_notifications_permission():
 		_scheduler.request_post_notifications_permission()
 

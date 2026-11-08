@@ -220,6 +220,25 @@ func sign_out() -> void:
 		await _request(HTTPClient.METHOD_POST, "/auth/v1/logout", {}, access_token)
 	_clear_session()
 
+## Changement de mot de passe : l'ancien est vérifié côté serveur.
+func change_password(current_password: String, new_password: String) -> Dictionary:
+	if not is_signed_in():
+		return {"ok": false, "error": "Non connecté."}
+	var mail := email()
+	if mail == "":
+		return {"ok": false, "error": "Adresse e-mail inconnue."}
+	# Vérification de l'ancien mot de passe par une connexion de contrôle.
+	var check: Dictionary = await _request(HTTPClient.METHOD_POST, "/auth/v1/token?grant_type=password", {
+		"email": mail,
+		"password": current_password,
+	})
+	if not bool(check.get("ok", false)):
+		return {"ok": false, "error": "Ancien mot de passe incorrect."}
+	var res: Dictionary = await _request(HTTPClient.METHOD_PUT, "/auth/v1/user", {"password": new_password}, access_token)
+	if bool(res.get("ok", false)):
+		return {"ok": true}
+	return {"ok": false, "error": str(res.get("error", "Modification impossible."))}
+
 func recover(mail: String) -> Dictionary:
 	var res: Dictionary = await _request(HTTPClient.METHOD_POST, "/auth/v1/recover", {"email": mail})
 	if not bool(res.get("ok", false)):

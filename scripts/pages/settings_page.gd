@@ -20,7 +20,8 @@ func refresh() -> void:
 	content.add_child(_account_block())
 	content.add_child(_appearance_block())
 	content.add_child(_notifications_block())
-	content.add_child(_data_block())
+	if not OS.has_feature("mobile"):
+		content.add_child(_scroll_block())
 	content.add_child(_about_block())
 	UI.stagger_in(content, 4)
 
@@ -56,24 +57,7 @@ func _notifications_block() -> Control:
 		_switch_row(UI.ICON_BELL, Loc.t("row_alerts"),
 			DataStore.notifications_enabled(), "NotificationsSwitch", _on_notifications),
 	]
-	# La notification de test ne sert qu'à vérifier le système sur téléphone.
-	if OS.has_feature("mobile"):
-		rows.append(_switch_row(UI.ICON_BELL, Loc.t("row_test_notifs"),
-			bool(DataStore.settings.get("test_notifications", true)), "TestNotifSwitch", _on_test_notifications))
 	return _block(Loc.t("sec_notifications"), rows)
-
-func _data_block() -> Control:
-	var last := DataStore.last_sync_at
-	if last == "":
-		last = Loc.t("never")
-	var rows: Array = [
-		_info_row(UI.ICON_DATABASE, Loc.t("row_last_sync"), last),
-		_nav_row(UI.ICON_DATABASE, Loc.t("row_sync"), "", func() -> void: _on_sync()),
-		_nav_row(UI.ICON_DATABASE, Loc.t("row_cache"), _cache_text(), func() -> void: _on_clear_cache()),
-		_nav_row(UI.ICON_SHARE, Loc.t("row_export"), "", func() -> void: _on_export()),
-		_nav_row(UI.ICON_TRASH, Loc.t("row_clear_local"), "", func() -> void: _on_clear_local(), true),
-	]
-	return _block(Loc.t("sec_data"), rows)
 
 func _about_block() -> Control:
 	var rows: Array = [
@@ -83,6 +67,24 @@ func _about_block() -> Control:
 		_nav_row(UI.ICON_SHIELD, Loc.t("row_legal"), "", func() -> void: _open_legal()),
 	]
 	return _block(Loc.t("sec_help"), rows)
+
+## Section réservée à l'ordinateur : choix du défilement à la souris.
+func _scroll_block() -> Control:
+	var rows: Array = [
+		_switch_row(UI.ICON_APPS, "Glisser en maintenant le clic",
+			bool(DataStore.settings.get("scroll_drag", true)), "ScrollDragSwitch", _on_scroll_drag),
+		_switch_row(UI.ICON_APPS, "Molette de la souris",
+			bool(DataStore.settings.get("scroll_wheel", true)), "ScrollWheelSwitch", _on_scroll_wheel),
+	]
+	return _block("Défilement", rows)
+
+func _on_scroll_drag(value: bool) -> void:
+	DataStore.settings["scroll_drag"] = value
+	DataStore.save_data()
+
+func _on_scroll_wheel(value: bool) -> void:
+	DataStore.settings["scroll_wheel"] = value
+	DataStore.save_data()
 
 # --- Fabrique de lignes ---------------------------------------------------
 func _block(title: String, rows: Array) -> Control:
@@ -212,28 +214,35 @@ func _open_devices() -> void:
 			12, UI.TEXT_2, false, true)))
 
 func _open_language() -> void:
-	_push_sub(Loc.t("row_language"), func(body: VBoxContainer) -> void:
-		for d in [["fr", Loc.t("french")], ["en", Loc.t("english")]]:
-			var key := str(d[0])
-			var label_txt := str(d[1])
-			var row := TapCard.new()
-			var card := UI.card(14)
-			var h := UI.hbox(10)
-			var l := UI.label(label_txt, 15, UI.TEXT, true, true)
-			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			h.add_child(l)
-			if DataStore.language() == key:
-				var check := UI.label("✓", 16, UI.ACCENT, true)
-				check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-				h.add_child(check)
-			card.add_child(h)
-			row.add_child(card)
-			row.tapped.connect(func() -> void:
-				DataStore.set_language(key)
-				Haptics.tap()
-				refresh())
-			body.add_child(row)
-		body.add_child(UI.label(Loc.t("language_desc"), 12, UI.TEXT_3, false, true)))
+	var sub := SubPage.new()
+	sub.name = "LangSubPage"
+	sub.z_index = Z_SUB
+	add_child(sub)
+	sub.open_with(Loc.t("row_language"), func(body: VBoxContainer) -> void: _fill_language(body, sub))
+
+func _fill_language(body: VBoxContainer, sub: SubPage) -> void:
+	for d in [["fr", Loc.t("french")], ["en", Loc.t("english")]]:
+		var key := str(d[0])
+		var label_txt := str(d[1])
+		var row := TapCard.new()
+		var card := UI.card(14)
+		var h := UI.hbox(10)
+		var l := UI.label(label_txt, 15, UI.TEXT, true, true)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(l)
+		if DataStore.language() == key:
+			var check := UI.label("✓", 16, UI.ACCENT, true)
+			check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			h.add_child(check)
+		card.add_child(h)
+		row.add_child(card)
+		row.tapped.connect(func() -> void:
+			DataStore.set_language(key)
+			Haptics.tap()
+			refresh()
+			sub.open_with(Loc.t("row_language"), func(b: VBoxContainer) -> void: _fill_language(b, sub)))
+		body.add_child(row)
+	body.add_child(UI.label(Loc.t("language_desc"), 12, UI.TEXT_3, false, true))
 
 func _open_legal() -> void:
 	_push_sub(Loc.t("row_legal"), func(body: VBoxContainer) -> void:
@@ -261,11 +270,6 @@ func _on_transparency(value: bool) -> void:
 
 func _on_notifications(value: bool) -> void:
 	DataStore.set_notifications(value)
-
-func _on_test_notifications(value: bool) -> void:
-	DataStore.settings["test_notifications"] = value
-	DataStore.save_data()
-	DataStore.toast.emit("Notification de test activée" if value else "Notification de test désactivée")
 
 func _on_sync() -> void:
 	DataStore.start_busy("Synchronisation…")

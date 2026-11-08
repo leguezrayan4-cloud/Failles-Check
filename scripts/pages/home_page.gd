@@ -90,7 +90,13 @@ func _stat(value: String, stat_name: String, col: Color) -> VBoxContainer:
 	v.add_child(l)
 	return v
 
-func _software_row(s: Dictionary) -> PanelContainer:
+func _software_row(s: Dictionary) -> Control:
+	var sid := str(s.get("id", ""))
+	var card := TapCard.new()
+	card.set_styles(
+		UI.stylebox(Color(1, 1, 1), 16, 1, UI.BORDER, 0),
+		UI.stylebox(UI.CARD_SOFT, 16, 1, UI.BORDER, 0),
+		UI.stylebox(UI.BORDER, 16, 1, UI.BORDER, 0))
 	var p := UI.card(14)
 	var row := UI.hbox(12)
 	var ic := UI.icon(UI.ICON_APPS, 22, UI.ACCENT)
@@ -102,8 +108,17 @@ func _software_row(s: Dictionary) -> PanelContainer:
 	v.add_child(UI.label(str(s.get("name", "")), 15, UI.TEXT, true, true))
 	v.add_child(UI.label(str(s.get("version", "")), 12, UI.TEXT_2))
 	row.add_child(v)
+	var chev := UI.icon(UI.ICON_CHEVRON, 14, UI.TEXT_3)
+	chev.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(chev)
 	p.add_child(row)
-	return p
+	card.add_child(p)
+	card.tapped.connect(func() -> void:
+		Haptics.tap()
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("open_software_sheet"):
+			scene.open_software_sheet(sid))
+	return card
 
 ## Ouvre le détail par-dessus l'écran courant (on reste dans le contexte).
 func _open(id: String) -> void:

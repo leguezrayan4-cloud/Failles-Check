@@ -13,7 +13,7 @@ config_version=5
 config/name="Failles Check"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="uid://dntlccd78nmx"
+config/icon="res://Logo_Fond_Blanc.png"
 
 [autoload]
 

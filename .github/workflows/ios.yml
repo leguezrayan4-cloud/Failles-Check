@@ -16,8 +16,8 @@ jobs:
 
       - name: Installer Godot 4.7.2 et les modèles d'export
         run: |
-          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip"
-          curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
+          curl -fL --retry 5 --retry-delay 10 -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip"
+          curl -fL --retry 5 --retry-delay 10 -o templates.tpz "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
           unzip -q godot.zip -d "$HOME/godot"
           unzip -q templates.tpz -d tpl
           mkdir -p "$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable"

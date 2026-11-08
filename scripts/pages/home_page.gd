@@ -52,7 +52,7 @@ func _hero() -> PanelContainer:
 	var p := UI.card(16)
 	var row := UI.hbox(14)
 	var logo := TextureRect.new()
-	logo.texture = preload("res://Logo.png")
+	logo.texture = preload("res://Logo_Fond_Noir.png")
 	logo.custom_minimum_size = Vector2(58, 58)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED

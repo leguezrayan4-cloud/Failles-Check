@@ -15,9 +15,26 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Installer Godot 4.7.2 et les modèles d'export
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fL --retry 5 --retry-delay 10 -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip"
-          curl -fL --retry 5 --retry-delay 10 -o templates.tpz "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
+          set -e
+          mkdir -p download
+          cd download
+
+          # Méthode 1 : téléchargement direct, avec nouvelles tentatives
+          if curl -fL --retry 5 --retry-delay 15 -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip" \
+             && curl -fL --retry 5 --retry-delay 15 -o templates.tpz "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"; then
+            echo "Téléchargement direct réussi."
+          else
+            # Méthode 2 : GitHub CLI (API GitHub), si le téléchargement direct échoue
+            echo "Téléchargement direct échoué, essai avec GitHub CLI."
+            gh release download 4.7.2-stable -R godotengine/godot \
+              -p "Godot_v4.7.2-stable_macos.universal.zip" -O godot.zip
+            gh release download 4.7.2-stable -R godotengine/godot \
+              -p "Godot_v4.7.2-stable_export_templates.tpz" -O templates.tpz
+          fi
+
           unzip -q godot.zip -d "$HOME/godot"
           unzip -q templates.tpz -d tpl
           mkdir -p "$HOME/Library/Application Support/Godot/export_templates/4.7.2.stable"

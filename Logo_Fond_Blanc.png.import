@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dosjici3hw4q3"
-valid=false
+uid="uid://cytiss0ps2ruk"
+path="res://.godot/imported/Logo_Fond_Blanc.png-7685923edf3169c899102e702bef3851.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://Logo_Fond_Blanc.png"
+dest_files=["res://.godot/imported/Logo_Fond_Blanc.png-7685923edf3169c899102e702bef3851.ctex"]
 
 [params]
 

@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://yx0cqfikkju8"
-valid=false
+uid="uid://cj30opmm8wbux"
+path="res://.godot/imported/Logo_Fond_Noir.png-dbbb96eb83609273d67159f8d34e16f7.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://Logo_Fond_Noir.png"
+dest_files=["res://.godot/imported/Logo_Fond_Noir.png-dbbb96eb83609273d67159f8d34e16f7.ctex"]
 
 [params]
 

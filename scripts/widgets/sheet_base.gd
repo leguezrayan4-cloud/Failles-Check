@@ -18,6 +18,7 @@ var _scroll: ScrollContainer
 var _is_open := false
 var _tween: Tween
 var _pull_active := false
+var _pull_candidate := false
 var _pull_start := Vector2.ZERO
 var _pull_dy := 0.0
 
@@ -136,6 +137,7 @@ func clear_body() -> void:
 		c.queue_free()
 
 func open() -> void:
+	Haptics.tap()
 	visible = true
 	_is_open = true
 	_layout()
@@ -224,26 +226,36 @@ func _kb_dismiss(event: InputEvent) -> void:
 		DisplayServer.virtual_keyboard_hide()
 
 func _begin_pull(pos: Vector2) -> void:
+	# On mémorise toujours le départ : le glissement peut commencer à tout
+	# moment, y compris quand le contenu revient tout en haut en cours de geste.
+	_pull_candidate = false
 	_pull_active = false
 	_pull_dy = 0.0
-	if _scroll == null or _scroll.scroll_vertical > 0:
+	if _panel == null or not _panel.get_global_rect().has_point(pos):
 		return
-	if not _panel.get_global_rect().has_point(pos):
-		return
-	_pull_active = true
+	_pull_candidate = true
 	_pull_start = pos
 
 func _update_pull(pos: Vector2) -> void:
-	if not _pull_active:
+	if not _pull_candidate and not _pull_active:
 		return
 	var dy := pos.y - _pull_start.y
-	if dy < PULL_START:
-		return
+	if not _pull_active:
+		# Le geste ne devient une fermeture que si le contenu est tout en haut.
+		if _scroll != null and _scroll.scroll_vertical > 0:
+			_pull_dy = 0.0
+			return
+		if dy < PULL_START:
+			return
+		_pull_active = true
+	if dy < 0.0:
+		dy = 0.0
 	_pull_dy = dy
 	_panel.position.y = _open_panel_y() + dy
 	get_viewport().set_input_as_handled()
 
 func _end_pull() -> void:
+	_pull_candidate = false
 	if not _pull_active:
 		return
 	_pull_active = false

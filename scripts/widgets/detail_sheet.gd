@@ -5,6 +5,7 @@ extends SheetBase
 ## bas pour fermer, contenu défilant).
 
 signal share_requested(v: Dictionary)
+signal translation_requested(v: Dictionary)
 
 func sheet_title() -> String:
 	return Loc.t("detail")
@@ -12,6 +13,7 @@ func sheet_title() -> String:
 func show_detail(v: Dictionary) -> void:
 	if v.is_empty():
 		return
+	DataStore.push_recent(str(v.get("id", "")))
 	clear_body()
 	_fill(v)
 	if not is_open():
@@ -85,6 +87,38 @@ func _fill(v: Dictionary) -> void:
 		clear_body()
 		_fill(v))
 	actions.add_child(bm)
+	var tr_btn := UI.ghost_button(Loc.t("ask_translation"), UI.ACCENT)
+	tr_btn.name = "SheetTranslateButton"
+	tr_btn.icon = UI.svg_texture(UI.ICON_AI, 18)
+	tr_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tr_btn.pressed.connect(func() -> void:
+		DataStore.mark_read(id)
+		translation_requested.emit(v))
+	_body.add_child(tr_btn)
+
+	var treated := UI.ghost_button("Traitée" if DataStore.is_read(id) else "Marquer comme traitée",
+		UI.ACCENT if DataStore.is_read(id) else UI.TEXT_2)
+	treated.name = "SheetTreatedButton"
+	treated.pressed.connect(func() -> void:
+		DataStore.mark_read(id)
+		Haptics.confirm()
+		clear_body()
+		_fill(v))
+	_body.add_child(treated)
+
+	# Commentaire personnel sur cette faille (distinct de la note du logiciel).
+	var comment := UI.line_edit("Ajouter un commentaire…")
+	comment.name = "SheetComment"
+	comment.text = DataStore.comment_for(id)
+	_body.add_child(comment)
+	var save_comment := UI.ghost_button("Enregistrer le commentaire", UI.TEXT_2)
+	save_comment.name = "SheetSaveComment"
+	save_comment.pressed.connect(func() -> void:
+		DataStore.set_comment(id, comment.text)
+		comment.release_focus()
+		Haptics.tap())
+	_body.add_child(save_comment)
+
 	var share := UI.ghost_button(Loc.t("share"), UI.TEXT_2)
 	share.name = "SheetShareButton"
 	share.icon = UI.svg_texture(UI.ICON_SHARE, 18)

@@ -139,6 +139,7 @@ func open_with(filters: Dictionary) -> void:
 	reset.pressed.connect(_reset)
 	row.add_child(reset)
 	var apply := UI.primary_button("Appliquer")
+	apply.pressed.connect(Haptics.tap)
 	apply.name = "FilterApply"
 	apply.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	apply.pressed.connect(_apply)

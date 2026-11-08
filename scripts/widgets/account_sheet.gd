@@ -167,6 +167,7 @@ func _on_primary() -> void:
 		_render()
 		return
 	_busy = true
+	Haptics.tap()
 	var busy_text := "Connexion…"
 	if _mode == "signup":
 		busy_text = "Création du compte…"
@@ -226,6 +227,32 @@ func _render_manage() -> void:
 	save_mail.name = "AccountSaveEmail"
 	save_mail.pressed.connect(_on_save_email)
 	_body.add_child(save_mail)
+
+	# --- Mot de passe ---
+	_body.add_child(UI.section_title("Mot de passe"))
+	var old_pwd := UI.line_edit("Mot de passe actuel")
+	old_pwd.name = "AccountOldPassword"
+	old_pwd.secret = true
+	old_pwd.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_PASSWORD
+	_body.add_child(old_pwd)
+	var new_pwd := UI.line_edit("Nouveau mot de passe")
+	new_pwd.name = "AccountNewPassword"
+	new_pwd.secret = true
+	new_pwd.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_PASSWORD
+	_body.add_child(new_pwd)
+	var confirm_pwd := UI.line_edit("Confirmer le nouveau mot de passe")
+	confirm_pwd.name = "AccountConfirmPassword"
+	confirm_pwd.secret = true
+	confirm_pwd.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_PASSWORD
+	_body.add_child(confirm_pwd)
+	var save_pwd := UI.ghost_button("Changer le mot de passe", UI.ACCENT)
+	save_pwd.name = "AccountChangePassword"
+	save_pwd.pressed.connect(func() -> void: _on_change_password())
+	_body.add_child(save_pwd)
+	var forgot := UI.ghost_button("Mot de passe oublié", UI.TEXT_2)
+	forgot.name = "AccountForgotPassword"
+	forgot.pressed.connect(func() -> void: _on_send_reset())
+	_body.add_child(forgot)
 
 	var out := UI.ghost_button("Se déconnecter", UI.TEXT_2)
 	out.name = "AccountSignOut"
@@ -310,4 +337,49 @@ func _on_delete() -> void:
 	else:
 		_error = str(res.get("error", "Suppression impossible."))
 	_confirm_delete = false
+	_render()
+
+
+func _on_change_password() -> void:
+	var old_txt := _field_text("AccountOldPassword")
+	var new_txt := _field_text("AccountNewPassword")
+	var conf_txt := _field_text("AccountConfirmPassword")
+	_error = ""
+	_info = ""
+	if old_txt == "" or new_txt == "":
+		_error = "Renseignez l'ancien et le nouveau mot de passe."
+		_render()
+		return
+	if new_txt.length() < 6:
+		_error = "Le nouveau mot de passe doit contenir 6 caractères minimum."
+		_render()
+		return
+	if new_txt != conf_txt:
+		_error = "Les deux nouveaux mots de passe ne correspondent pas."
+		_render()
+		return
+	DataStore.start_busy("Modification du mot de passe…")
+	var res: Dictionary = await DataStore.auth.change_password(old_txt, new_txt)
+	DataStore.end_busy()
+	if bool(res.get("ok", false)):
+		_info = "Mot de passe modifié."
+		Haptics.confirm()
+	else:
+		_error = str(res.get("error", "Modification impossible."))
+	_render()
+
+func _on_send_reset() -> void:
+	var mail := DataStore.auth.email()
+	if mail == "":
+		_error = "Adresse e-mail inconnue."
+		_render()
+		return
+	DataStore.start_busy("Envoi du message…")
+	var res: Dictionary = await DataStore.auth.recover(mail)
+	DataStore.end_busy()
+	if bool(res.get("ok", false)):
+		_info = "Un e-mail de réinitialisation a été envoyé."
+		_error = ""
+	else:
+		_error = str(res.get("error", "Envoi impossible."))
 	_render()

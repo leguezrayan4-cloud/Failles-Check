@@ -7,6 +7,8 @@ signal favorite_toggled(id: String)
 signal delete_requested(id: String)
 
 var _item: Dictionary = {}
+var _fav_button: Button = null
+var _fav_id := ""
 
 func sheet_title() -> String:
 	return "Logiciel"
@@ -105,9 +107,12 @@ func show_software(item: Dictionary) -> void:
 	fav.name = "SoftwareFavorite"
 	fav.icon = UI.svg_texture(UI.ICON_HEART if fav_on else UI.ICON_HEART_OUTLINE, 18)
 	fav.add_theme_color_override("icon_normal_color", UI.DANGER if fav_on else UI.TEXT_2)
+	fav.add_theme_color_override("icon_hover_color", UI.DANGER if fav_on else UI.TEXT_2)
 	fav.add_theme_color_override("icon_pressed_color", UI.DANGER)
 	fav.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	fav.pressed.connect(func() -> void: favorite_toggled.emit(id))
+	_fav_button = fav
+	_fav_id = id
 	actions.add_child(fav)
 	var del := UI.ghost_button("Supprimer", UI.DANGER)
 	del.name = "SoftwareDelete"
@@ -133,3 +138,15 @@ func _close_kb() -> void:
 		vp.gui_release_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_hide()
+
+
+## Met à jour l'icône du cœur sans fermer ni rouvrir le panneau.
+func set_favorite_state(id: String, on: bool) -> void:
+	if _fav_button == null or not is_instance_valid(_fav_button) or _fav_id != id:
+		return
+	_fav_button.icon = UI.svg_texture(UI.ICON_HEART if on else UI.ICON_HEART_OUTLINE, 18)
+	_fav_button.text = "Favori" if on else "Ajouter aux favoris"
+	var col := UI.DANGER if on else UI.TEXT_2
+	_fav_button.add_theme_color_override("icon_normal_color", col)
+	_fav_button.add_theme_color_override("icon_hover_color", UI.DANGER if on else UI.TEXT_2)
+	_fav_button.add_theme_color_override("font_color", col)

@@ -41,6 +41,12 @@ static func _on_initialized() -> void:
 static func available() -> bool:
 	return _scheduler != null and _ready
 
+## Met à jour le badge de l'icône de l'application.
+static func set_badge(count: int) -> void:
+	if not available():
+		return
+	_scheduler.set_badge_count(max(0, count))
+
 ## Affiche une vraie notification système.
 static func notify(title: String, body: String) -> void:
 	if not available():

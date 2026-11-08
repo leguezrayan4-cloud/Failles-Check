@@ -20,6 +20,10 @@ var _summary_label: Label
 var _results_box: VBoxContainer
 var _online_button: Button
 var _filter_button: Button
+var _page_list: Array = []
+var _shown := 0
+var _loading_more := false
+const PER_PAGE := 15
 
 func page_title() -> String:
 	return Loc.t("search_title")
@@ -52,6 +56,7 @@ func refresh() -> void:
 	if _status != "":
 		content.add_child(UI.label(_status, 12, UI.TEXT_2, false, true))
 
+	_connect_scroll()
 	_count_label = UI.label("", 13, UI.TEXT_2)
 	content.add_child(_count_label)
 
@@ -184,9 +189,48 @@ func _apply() -> void:
 	if DataStore.has_real_data():
 		_results_box.add_child(UI.badge("Source : NVD (NIST)", UI.ACCENT))
 
-	for v in list:
-		_results_box.add_child(UI.vuln_card(v, _open.bind(str(v.get("id", "")))))
+	_page_list = list
+	_shown = 0
+	_append_page()
+
+## Affiche les résultats par petits blocs (défilement = bloc suivant).
+func _append_page() -> void:
+	if _results_box == null or _page_list.is_empty():
+		return
+	var end: int = mini(_page_list.size(), _shown + PER_PAGE)
+	for i in range(_shown, end):
+		var v: Variant = _page_list[i]
+		if typeof(v) == TYPE_DICTIONARY:
+			_results_box.add_child(UI.vuln_card(v, _open.bind(str((v as Dictionary).get("id", "")))))
+	_shown = end
 	UI.stagger_in(_results_box, 6)
+
+func _on_scrolled() -> void:
+	if _loading_more or _page_list.is_empty() or _shown >= _page_list.size():
+		return
+	var sc := _scroll_node()
+	if sc == null:
+		return
+	var bar := sc.get_v_scroll_bar()
+	if sc.scroll_vertical > int(bar.max_value) - 600:
+		_loading_more = true
+		_append_page()
+		await get_tree().process_frame
+		_loading_more = false
+
+func _scroll_node() -> ScrollContainer:
+	var node: Node = content
+	while node != null and not (node is ScrollContainer):
+		node = node.get_parent()
+	return node as ScrollContainer
+
+func _connect_scroll() -> void:
+	var sc := _scroll_node()
+	if sc == null:
+		return
+	var bar := sc.get_v_scroll_bar()
+	if not bar.changed.is_connected(_on_scrolled):
+		bar.changed.connect(_on_scrolled)
 
 func _filtered() -> Array:
 	var q := _query.strip_edges().to_lower()

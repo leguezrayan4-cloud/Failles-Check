@@ -37,6 +37,8 @@ var _sync_timer: Timer
 var _test_timer: Timer
 var _live_timer: Timer
 var _syncing := false
+## Section IA : historique local et quota connu.
+var ai_usage = null
 
 var auth: AuthClient
 
@@ -128,6 +130,103 @@ func _on_auth_state() -> void:
 		save_data()
 	auth_changed.emit()
 
+## --- Section IA -------------------------------------------------------------
+const AI_CHAT_PATH := "user://faillescheck_ai_chat.json"
+
+func ai_history() -> Array:
+	var out: Array = []
+	if FileAccess.file_exists(AI_CHAT_PATH):
+		var txt := FileAccess.get_file_as_string(AI_CHAT_PATH)
+		var parsed: Variant = JSON.parse_string(txt) if txt.strip_edges() != "" else null
+		if typeof(parsed) == TYPE_ARRAY:
+			out = parsed
+	return out
+
+func ai_save_history(messages: Array) -> void:
+	var f := FileAccess.open(AI_CHAT_PATH, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(messages))
+	f.close()
+
+func ai_clear_history() -> void:
+	if FileAccess.file_exists(AI_CHAT_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(AI_CHAT_PATH))
+
+func ai_translation_for(id: String) -> String:
+	var all: Dictionary = settings.get("ai_translations", {})
+	return str(all.get(id, ""))
+
+func set_ai_translation(id: String, text: String) -> void:
+	if id == "" or text.strip_edges() == "":
+		return
+	var all: Dictionary = settings.get("ai_translations", {})
+	all[id] = text.strip_edges()
+	settings["ai_translations"] = all
+	save_data()
+
+func ai_remaining() -> int:
+	return int(settings.get("ai_remaining", -1))
+
+func ai_resets_at() -> String:
+	return str(settings.get("ai_resets_at", ""))
+
+func set_ai_quota(remaining: int, resets_at: String) -> void:
+	settings["ai_remaining"] = remaining
+	if resets_at != "":
+		settings["ai_resets_at"] = resets_at
+	save_data()
+
+## --- Failles lues / récentes / commentaires --------------------------------
+func mark_read(id: String) -> void:
+	if id == "":
+		return
+	var read_ids: Array = settings.get("read_ids", [])
+	if read_ids.has(id):
+		return
+	read_ids.append(id)
+	settings["read_ids"] = read_ids
+	save_data()
+
+func is_read(id: String) -> bool:
+	var read_ids: Array = settings.get("read_ids", [])
+	return read_ids.has(id)
+
+func unread_critical() -> int:
+	var n := 0
+	for v in vulnerabilities:
+		if str(v.get("severity", "")) == "critique" and not is_read(str(v.get("id", ""))):
+			n += 1
+	return n
+
+func push_recent(id: String) -> void:
+	if id == "":
+		return
+	var list: Array = settings.get("recent_ids", [])
+	list.erase(id)
+	list.insert(0, id)
+	while list.size() > 20:
+		list.pop_back()
+	settings["recent_ids"] = list
+	save_data()
+
+func recent_ids() -> Array:
+	return settings.get("recent_ids", [])
+
+func comment_for(id: String) -> String:
+	var all: Dictionary = settings.get("comments", {})
+	return str(all.get(id, ""))
+
+func set_comment(id: String, text: String) -> void:
+	var all: Dictionary = settings.get("comments", {})
+	if text.strip_edges() == "":
+		all.erase(id)
+	else:
+		all[id] = text.strip_edges()
+	settings["comments"] = all
+	save_data()
+	toast.emit("Commentaire enregistré")
+
 ## Indicateur de chargement global (utilisé par les écrans).
 func start_busy(message: String) -> void:
 	busy_started.emit(message)
@@ -143,6 +242,22 @@ func set_language(code: String) -> void:
 	Loc.lang = code
 	save_data()
 	toast.emit("Langue : " + ("Français" if code == "fr" else "English"))
+
+## Suppression des données de CET appareil (le compte distant est conservé).
+func clear_local_data() -> void:
+	software = []
+	saved_ids = []
+	selected_id = ""
+	settings["recent_ids"] = []
+	settings["comments"] = {}
+	settings["read_ids"] = []
+	settings["ai_translations"] = {}
+	settings.erase("last_sync_at")
+	VulnCache.clear()
+	ai_clear_history()
+	rebuild()
+	save_data()
+	toast.emit("Données locales supprimées")
 
 func is_reduce_transparency() -> bool:
 	return bool(settings.get("reduce_transparency", false))

@@ -49,6 +49,7 @@ func _ready() -> void:
 	_defs = [
 		{"title": "Accueil", "short": "tab_home", "icon": UI.ICON_HOME, "page": HomePage},
 		{"title": "Recherche", "short": "tab_search", "icon": UI.ICON_SEARCH, "page": SearchPage},
+		{"title": "IA", "short": "tab_ai", "icon": UI.ICON_AI, "page": AiPage},
 		{"title": "Mes logiciels", "short": "tab_software", "icon": UI.ICON_APPS, "page": SoftwarePage},
 		{"title": "Paramètres", "short": "tab_settings", "icon": UI.ICON_SETTINGS, "page": SettingsPage},
 	]
@@ -58,6 +59,8 @@ func _ready() -> void:
 	_build_sheet()
 	_build_notifications()
 	_build_busy_layer()
+	_build_offline_layer()
+	_build_guide()
 	_build_loading()
 	DataStore.toast.connect(_show_toast)
 	DataStore.busy_started.connect(_show_busy)
@@ -65,6 +68,7 @@ func _ready() -> void:
 	DataStore.accessibility_changed.connect(_on_accessibility_changed)
 	_switch_to(0, true)
 	_start_loading()
+	_check_network()
 
 # --- Fond plein écran ------------------------------------------------------
 func _build_background() -> void:
@@ -243,6 +247,7 @@ func _input(event: InputEvent) -> void:
 		_close_keyboard()
 
 func _on_nav_pressed(index: int) -> void:
+	Haptics.tap()
 	_close_keyboard()
 	_close_all_sheets()
 	var dir := 1 if index >= _current else -1
@@ -264,6 +269,7 @@ func _build_sheet() -> void:
 	_sheet.name = "DetailSheet"
 	_sheet.z_index = Z_SHEET
 	_sheet.share_requested.connect(_on_share_requested)
+	_sheet.translation_requested.connect(open_ai_translation)
 	add_child(_sheet)
 
 	_software_sheet = SoftwareSheet.new()
@@ -295,8 +301,26 @@ func _build_sheet() -> void:
 	add_child(_account_sheet)
 
 func _on_share_requested(v: Dictionary) -> void:
+	Haptics.tap()
 	_close_keyboard()
 	_share_sheet.show_for(v)
+
+## Depuis une fiche : ouvre l'onglet IA et demande la traduction.
+func open_ai_translation(v: Dictionary) -> void:
+	Haptics.tap()
+	_close_keyboard()
+	_close_all_sheets()
+	var idx := -1
+	for i in _defs.size():
+		if _defs[i]["page"] == AiPage:
+			idx = i
+			break
+	if idx < 0:
+		return
+	_switch_to(idx, false, 1)
+	var page: Variant = _pages[idx]
+	if page != null and page.has_method("request_translation"):
+		page.request_translation(v)
 
 func open_account_sheet() -> void:
 	_close_keyboard()
@@ -513,6 +537,7 @@ func _on_load_completed(with_warnings: bool, summary: String) -> void:
 	await get_tree().create_timer(0.45).timeout
 	_hide_loading()
 	_refresh_nav_labels()
+	_maybe_show_guide()
 	_refresh_in_background()
 	_maybe_ask_login()
 
@@ -562,6 +587,147 @@ func _maybe_ask_login() -> void:
 	await get_tree().create_timer(0.7).timeout
 	if not DataStore.auth.is_signed_in():
 		open_account_sheet()
+
+# --- Pas de connexion au lancement ----------------------------------------
+var _offline_layer: Control
+var _offline_http: HTTPRequest
+
+func _build_offline_layer() -> void:
+	_offline_layer = Control.new()
+	_offline_layer.name = "OfflineLayer"
+	_offline_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_offline_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	_offline_layer.z_index = Z_NOTIF + 1
+	_offline_layer.visible = false
+	add_child(_offline_layer)
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.953, 0.969, 0.996)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_offline_layer.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_offline_layer.add_child(center)
+
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 1)
+	sb.set_corner_radius_all(22)
+	sb.border_color = UI.BORDER
+	sb.set_border_width_all(1)
+	sb.set_content_margin_all(22)
+	sb.shadow_color = Color(0, 0, 0, 0.10)
+	sb.shadow_size = 18
+	card.add_theme_stylebox_override("panel", sb)
+	card.custom_minimum_size = Vector2(300, 0)
+	center.add_child(card)
+
+	var v := UI.vbox(14)
+	card.add_child(v)
+	var ic := UI.icon(UI.ICON_SHIELD, 34, UI.ACCENT)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	v.add_child(ic)
+	var t := UI.label(Loc.t("offline_title"), 20, UI.TEXT, true, true)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	var m := UI.label(Loc.t("offline_msg"), 13, UI.TEXT_2, false, true)
+	m.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(m)
+	var retry := UI.primary_button(Loc.t("retry"))
+	retry.name = "OfflineRetry"
+	retry.pressed.connect(_retry_network)
+	v.add_child(retry)
+	var off := UI.ghost_button(Loc.t("offline_mode"), UI.TEXT_2)
+	off.name = "OfflineContinue"
+	off.pressed.connect(_continue_offline)
+	v.add_child(off)
+
+func _check_network() -> void:
+	if _offline_http == null:
+		_offline_http = HTTPRequest.new()
+		_offline_http.timeout = 6.0
+		add_child(_offline_http)
+	var err := _offline_http.request("https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1", PackedStringArray(), HTTPClient.METHOD_GET)
+	if err != OK:
+		_show_offline()
+		return
+	var res: Array = await _offline_http.request_completed
+	var code := int(res[1])
+	var result := int(res[0])
+	if result != HTTPRequest.RESULT_SUCCESS or code == 0:
+		_show_offline()
+	else:
+		_offline_layer.visible = false
+
+func _show_offline() -> void:
+	_offline_layer.visible = true
+	Haptics.tap()
+
+func _retry_network() -> void:
+	Haptics.tap()
+	await _check_network()
+
+func _continue_offline() -> void:
+	Haptics.tap()
+	DataStore.set_online(false)
+	DataStore.settings["online"] = false
+	DataStore.save_data()
+	_offline_layer.visible = false
+	DataStore.toast.emit(Loc.t("offline_warn"))
+
+# --- Guide de démarrage ----------------------------------------------------
+var _guide: GuideOverlay
+
+func _build_guide() -> void:
+	_guide = GuideOverlay.new()
+	_guide.name = "Guide"
+	add_child(_guide)
+
+func show_guide() -> void:
+	if _guide != null:
+		_guide.show_guide()
+
+func _maybe_show_guide() -> void:
+	if bool(DataStore.settings.get("guide_seen", false)):
+		return
+	await get_tree().create_timer(0.4).timeout
+	if _guide != null:
+		_guide.open()
+
+# --- Export CSV ------------------------------------------------------------
+func open_export_sheet() -> void:
+	if DataStore.software.is_empty():
+		DataStore.toast.emit("Aucun logiciel à exporter")
+		return
+	var lines: Array = ["nom;version;editeur;favori;note"]
+	for item in DataStore.software:
+		if typeof(item) != TYPE_DICTIONARY:
+			continue
+		var note := str(item.get("note", "")).replace(";", ",").replace("
+", " ")
+		lines.append("%s;%s;%s;%s;%s" % [
+			str(item.get("name", "")).replace(";", ","),
+			str(item.get("version", "")),
+			str(item.get("editor", "")).replace(";", ","),
+			"oui" if bool(item.get("favorite", false)) else "non",
+			note,
+		])
+	var csv := "
+".join(lines)
+	var path := "user://faillescheck_logiciels.csv"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(csv)
+		f.close()
+	DisplayServer.clipboard_set(csv)
+	DataStore.toast.emit("%d logiciel(s) exporté(s) — CSV copié" % DataStore.software.size())
+
+func confirm_clear_local() -> void:
+	_confirm_sheet.ask(Loc.t("clear_local_title"), Loc.t("clear_local_msg"), Loc.t("delete"),
+		func() -> void:
+			DataStore.clear_local_data()
+			Haptics.confirm())
 
 # --- Notifications ---------------------------------------------------------
 ## Couche dédiée (z_index le plus élevé) : aucune barre, carte ou panneau
@@ -698,6 +864,7 @@ func _show_toast(message: String) -> void:
 	_toast_tween.parallel().tween_property(_toast_panel, "offset_bottom", rest, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_toast_tween.tween_interval(1.7)
 	_toast_tween.tween_property(_toast_panel, "modulate:a", 0.0, 0.3)
+
 
 
 
